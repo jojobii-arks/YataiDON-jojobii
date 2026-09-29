@@ -63,7 +63,6 @@ void handle_exception() {
 static void install_crash_handlers() {
     std::set_terminate(handle_exception);
 #ifdef _WIN32
-    std::signal(SIGINT, signal_handler);
     win32_install_crash_handlers();
 #elif defined(__APPLE__) && !defined(YATAIDON_PLATFORM_IOS)
     macos_install_crash_handlers();

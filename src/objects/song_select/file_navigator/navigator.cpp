@@ -897,7 +897,7 @@ std::unordered_map<std::string, int> Navigator::get_tier_statistics() {
     std::vector<std::string> folders;
     folders.reserve(song_levels.size());
     for (const auto& [path_str, _] : song_levels)
-        folders.push_back(Tier_list.folder_key_from_path(fs::path(path_str)));
+        folders.push_back(tier_list.folder_key_from_path(fs::path(path_str)));
     return tier_list.count_local(folders);
 }
 

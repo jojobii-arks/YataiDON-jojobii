@@ -15,7 +15,7 @@
 #include <spdlog/spdlog.h>
 
 #ifdef _WIN32
-#include "platform/platform_windows.h"
+#include "../../platform/platform_windows.h"
 #endif
 
 

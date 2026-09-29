@@ -1,10 +1,11 @@
-#include "win32_win32.h"
+#include "platform_windows.h"
 
 #include <windows.h>
 #include <dbghelp.h>
 #include <portaudio.h>
 #include <spdlog/spdlog.h>
 #include <atomic>
+#include <csignal>
 #include <string>
 #include <filesystem>
 #include <cstdint>
