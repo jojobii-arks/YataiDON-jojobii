@@ -107,6 +107,14 @@ std::optional<Screens> SongSelect2PScreen::update() {
         apply_sort_window_result();
     }
 
+    if (navigator.tier_sort_ready() && !tier_sort_selector) {
+        tier_sort_selector.emplace(navigator.get_tier_statistics(), last_tier_sort);
+    }
+    if (tier_sort_selector) {
+        state = SongSelectState::TIER_SORTING;
+        tier_sort_selector->update(current_time);
+    }
+
     poll_song_jump(current_time);
     handle_input(current_time);
 
@@ -183,6 +191,7 @@ void SongSelect2PScreen::draw() {
     if (screen_init && !popup_open) navigator.draw_score_history();
 
     if (diff_sort_selector) diff_sort_selector->draw();
+    if (tier_sort_selector) tier_sort_selector->draw();
     if (search_box) search_box->draw();
     if (game_transition.has_value()) {
         game_transition->draw();

@@ -83,4 +83,5 @@ const std::map<GenreIndex, std::array<std::optional<ray::Color>, 2>> DEFAULT_COL
     { GenreIndex::RECENT,      { std::nullopt,             ray::Color(35,  123, 103, 255) } },
     { GenreIndex::DAN,         { ray::Color(35,  102, 170, 255), ray::Color(25,  68,  137, 255) } },
     { GenreIndex::DIFFICULTY,  { ray::Color(255, 85,  95,  255), ray::Color(157, 13,  31,  255) } },
+    { GenreIndex::TIER,        { ray::Color(100, 70,  160, 255), ray::Color(50,  25,  100, 255) } },
 };

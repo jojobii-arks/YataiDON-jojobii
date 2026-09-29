@@ -47,14 +47,19 @@ void register_song_select_lua_bindings(sol::state& lua) {
         "diff_fade_in", &SongBox::diff_fade_in,
         "has_ura",      &SongBox::has_ura,
         "ex_data_flag", &SongBox::ex_data_flag,
+        "tier",         [](SongBox& self) { return self.tier(); },
+        "tier_oni",     &SongBox::tier_oni,
+        "tier_ura",     &SongBox::tier_ura,
+        "tier_for",     [](SongBox& self, int diff) { return self.tier_for(diff); },
         "course_info", [](SongBox& self, int diff) {
             auto info = self.course_info(diff);
-            sol::table t = script_manager.lua->create_table(0, 5);
+            sol::table t = script_manager.lua->create_table(0, 6);
             t["has_course"]   = info.has_course;
             t["level"]        = info.level;
             t["is_branching"] = info.is_branching;
             t["crown"]        = info.crown;
             t["rank"]         = info.rank;
+            t["tier"]         = self.tier_for(diff);
             return t;
         }
     );
@@ -64,6 +69,7 @@ void register_song_select_lua_bindings(sol::state& lua) {
         "tja_count",      sol::readonly(&FolderBox::tja_count),
         "kind", [](FolderBox& self) -> std::string {
             if (self.genre_index == GenreIndex::DAN) return "dan";
+            if (self.genre_index == GenreIndex::TIER) return "tier";
             if (!self.collection.empty())            return "sort";
             return "genre";
         },

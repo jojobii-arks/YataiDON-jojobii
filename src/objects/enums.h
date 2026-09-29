@@ -42,7 +42,8 @@ enum SongSelectState {
     SONG_SELECTED = 1,
     DIFF_SORTING = 2,
     SEARCHING = 3,
-    DAN_SELECTED = 4
+    DAN_SELECTED = 4,
+    TIER_SORTING = 5
 };
 
 inline std::string branch_diff_to_string(BranchDifficulty difficulty) {
@@ -80,7 +81,8 @@ enum class GenreIndex : int {
     FAVORITE    = 11,
     RECENT      = 12,
     DAN         = 13,
-    DIFFICULTY  = 14
+    DIFFICULTY  = 14,
+    TIER        = 15
 };
 
 inline const std::map<GenreIndex, int> GENRE_TO_REF_FRAME = {
@@ -99,6 +101,7 @@ inline const std::map<GenreIndex, int> GENRE_TO_REF_FRAME = {
     { GenreIndex::RECENT,      9 },
     { GenreIndex::DAN,         0 },
     { GenreIndex::DIFFICULTY,  0 },
+    { GenreIndex::TIER,        0 },
 };
 
 inline int genre_to_ref_frame(GenreIndex genre) {
@@ -129,6 +132,7 @@ inline const std::map<GenreIndex, std::set<std::string>> GENRE_MAP = {
     { GenreIndex::RECENT,     {"RECENT"} },
     { GenreIndex::DAN,        {"DAN", "段位道場"} },
     { GenreIndex::DIFFICULTY, {"DIFFICULTY"} },
+    { GenreIndex::TIER,       {"TIER"} },
 };
 
 inline GenreIndex get_genre_index(const std::string& genreString) {
@@ -144,6 +148,6 @@ inline GenreIndex get_genre_index(const std::string& genreString) {
     return GenreIndex::DEFAULT;
 }
 
-inline const std::array<std::string, 6> COLLECTIONS = {
-    "NEW", "RECENT", "FAVORITE", "DIFFICULTY", "RECOMMENDED", "SEARCH"
+inline const std::array<std::string, 7> COLLECTIONS = {
+    "NEW", "RECENT", "FAVORITE", "DIFFICULTY", "RECOMMENDED", "SEARCH", "TIER"
 };

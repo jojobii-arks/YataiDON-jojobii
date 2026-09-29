@@ -5,6 +5,7 @@
 #include "../objects/song_select/song_select_script.h"
 #include "../objects/song_select/dan_transition.h"
 #include "../objects/song_select/search_box.h"
+#include "../objects/song_select/tier_sort.h"
 #include "../objects/global/allnet_indicator.h"
 #include "../objects/global/coin_overlay.h"
 #include "../objects/global/timer.h"
@@ -43,6 +44,9 @@ protected:
     int last_diff_order = 1;
     void apply_sort_window_result();
 
+    std::optional<TierSortSelect> tier_sort_selector;
+    std::string last_tier_sort;
+
     std::optional<SearchBox> search_box;
 
     virtual void select_song(SongBox* song);
@@ -52,6 +56,7 @@ protected:
     virtual void handle_input_browsing(double current_ms);
     virtual void handle_input_selecting();
     virtual void handle_input_diff_sorting();
+    virtual void handle_input_tier_sorting();
     virtual void handle_input_search();
 
     void poll_song_jump(double current_ms);
