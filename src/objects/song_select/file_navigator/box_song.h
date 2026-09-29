@@ -36,6 +36,10 @@ public:
     bool is_ura = false;
     GenreIndex song_genre_index = GenreIndex::DEFAULT;
     std::string song_genre_label;
+    // Community clear-tier letters from taiko.wiki (empty if unknown / custom).
+    std::string tier_oni;
+    std::string tier_ura;
+    std::unique_ptr<OutlinedText> tier_badge;
 
     SongBox(const fs::path& path, const BoxDef& box_def, SongParser parser);
     ~SongBox() override {
@@ -88,6 +92,18 @@ public:
         if (parser.ex_data.limited_time) return 3;
         if (is_new) return 4;
         return 0;
+    }
+    // Community tier letter for a course (3=oni, 4=ura). Empty if unknown.
+    std::string tier_for(int diff) const {
+        if (diff == (int)Difficulty::URA) return tier_ura;
+        if (diff == (int)Difficulty::ONI) return tier_oni;
+        return {};
+    }
+    // Prefer ura when the box is in ura mode and has an ura tier; else oni; else ura.
+    std::string tier() const {
+        if (is_ura && !tier_ura.empty()) return tier_ura;
+        if (!tier_oni.empty()) return tier_oni;
+        return tier_ura;
     }
     struct CourseInfo { bool has_course; int level; bool is_branching; int crown; int rank; };
     CourseInfo course_info(int diff) const {

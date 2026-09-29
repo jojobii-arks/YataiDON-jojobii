@@ -87,6 +87,23 @@ void SongSelectScreen::handle_input_diff_sorting() {
     }
 }
 
+void SongSelectScreen::handle_input_tier_sorting() {
+    if (!tier_sort_selector) return;
+    auto result = player->handle_input_tier_sort(&tier_sort_selector.value());
+    if (!result) return;
+    if (*result < 0) {
+        tier_sort_selector.reset();
+        state = SongSelectState::BROWSING;
+        navigator.cancel_tier_sort();
+    } else {
+        std::string tier = tier_sort_selector->tier_at(*result);
+        last_tier_sort = tier;
+        tier_sort_selector.reset();
+        state = SongSelectState::BROWSING;
+        navigator.apply_tier_sort(tier);
+    }
+}
+
 void SongSelectScreen::apply_sort_window_result() {
     if (!diff_sort_selector || !tex.options[SCO::ONE_MENU_SORT]) return;
     auto r = diff_sort_selector->take_result();
@@ -233,6 +250,8 @@ void SongSelectScreen::handle_input(double current_ms) {
         handle_input_selecting();
     } else if (state == SongSelectState::DIFF_SORTING) {
         handle_input_diff_sorting();
+    } else if (state == SongSelectState::TIER_SORTING) {
+        handle_input_tier_sorting();
     } else if (state == SongSelectState::SEARCHING) {
         handle_input_search();
     }
@@ -264,6 +283,14 @@ std::optional<Screens> SongSelectScreen::update() {
         state = SongSelectState::DIFF_SORTING;
         diff_sort_selector->update(current_time);
         apply_sort_window_result();
+    }
+
+    if (navigator.tier_sort_ready() && !tier_sort_selector) {
+        tier_sort_selector.emplace(navigator.get_tier_statistics(), last_tier_sort);
+    }
+    if (tier_sort_selector) {
+        state = SongSelectState::TIER_SORTING;
+        tier_sort_selector->update(current_time);
     }
 
     poll_song_jump(current_time);
@@ -376,6 +403,7 @@ void SongSelectScreen::draw() {
     if (screen_init && !popup_open) navigator.draw_score_history();
 
     if (diff_sort_selector) diff_sort_selector->draw();
+    if (tier_sort_selector) tier_sort_selector->draw();
     if (search_box) search_box->draw();
     if (game_transition.has_value()) {
         game_transition->draw();

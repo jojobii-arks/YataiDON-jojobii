@@ -6,6 +6,7 @@
 #include "color_utils.h"
 #include "../song_select_script.h"
 #include "../../../libs/filesystem.h"
+#include "../../../libs/tier_list.h"
 #ifdef SUPPORT_FUMEN
 #include "../../../libs/optional/gen4.h"
 #include "../../../libs/optional/gen3.h"
@@ -277,6 +278,8 @@ void Navigator::init(std::vector<fs::path> songs_paths) {
         genre_bg_end_pos.reset();
         awaiting_diff_sort = false;
         diff_sort_filter.reset();
+        awaiting_tier_sort = false;
+        tier_sort_filter.reset();
         reopen_folder_path.reset();
         reopen_song_path.reset();
         items.clear();
@@ -302,6 +305,8 @@ void Navigator::init(std::vector<fs::path> songs_paths) {
             genre_bg.reset();
             awaiting_diff_sort = false;
             diff_sort_filter.reset();
+            awaiting_tier_sort = false;
+            tier_sort_filter.reset();
             load_all_roots();
         } else {
             if (inline_state.has_value()) {
@@ -659,6 +664,7 @@ void Navigator::load_current_directory_async(const fs::path path) {
     auto preparsed = parse_songs_parallel(song_paths, abort_loading);
 
     try {
+        bool saw_tier_collection = false;
         for (const fs::directory_entry& entry : fs::directory_iterator(path)) {
             if (abort_loading) break;
             const fs::path& curr_path = entry.path();
@@ -705,6 +711,8 @@ void Navigator::load_current_directory_async(const fs::path path) {
                     BoxDef entry_box_def = parse_box_def(curr_path);
                     if (hide_dan && entry_box_def.genre_index == GenreIndex::DAN)
                         continue;
+                    if (entry_box_def.collection == "TIER")
+                        saw_tier_collection = true;
                     auto folder = std::make_unique<FolderBox>(curr_path, entry_box_def, song_files);
                     if (entry_box_def.collection == "RECOMMENDED")
                         folder->tja_count = 10;
@@ -746,6 +754,14 @@ void Navigator::load_current_directory_async(const fs::path path) {
             } catch (const std::exception& e) {
                 spdlog::warn("Skipping entry: {}", e.what());
             }
+        }
+        // Inject a virtual Tier Sort folder at each Songs root so we never write under Songs/.
+        bool is_songs_root = std::find(root_paths.begin(), root_paths.end(), path) != root_paths.end();
+        if (is_songs_root && !saw_tier_collection && !abort_loading) {
+            BoxDef tier_def = parse_box_def(path / ".tier_sort");
+            auto folder = std::make_unique<FolderBox>(path / ".tier_sort", tier_def, song_files);
+            folder->tja_count = 0;
+            enqueue_box(std::move(folder));
         }
     } catch (const fs::filesystem_error& e) {
         spdlog::error("Error loading directory: {}", e.what());
@@ -859,6 +875,86 @@ void Navigator::cancel_diff_sort() {
     inline_state.reset();
     pending_inline_path.reset();
     pending_inline_folder = nullptr;
+}
+
+void Navigator::apply_tier_sort(const std::string& tier) {
+    last_tier_sort   = tier;
+    tier_sort_filter = tier;
+    awaiting_tier_sort = false;
+    begin_inline_load();
+}
+
+void Navigator::cancel_tier_sort() {
+    awaiting_tier_sort = false;
+    tier_sort_filter.reset();
+    inline_state.reset();
+    pending_inline_path.reset();
+    pending_inline_folder = nullptr;
+}
+
+std::unordered_map<std::string, int> Navigator::get_tier_statistics() {
+    wait_for_song_files();
+    std::vector<std::string> folders;
+    folders.reserve(song_levels.size());
+    for (const auto& [path_str, _] : song_levels)
+        folders.push_back(Tier_list.folder_key_from_path(fs::path(path_str)));
+    return tier_list.count_local(folders);
+}
+
+void Navigator::load_collection_tier(const fs::path& path, const BoxDef& box_def, const std::string& tier) {
+    struct Hit { fs::path path; fs::path sibling; int order; };
+    std::vector<Hit> hits;
+
+    wait_for_song_files();
+    const fs::path parent = path.parent_path();
+    std::vector<std::pair<std::string, std::array<int, 5>>> index(song_levels.begin(), song_levels.end());
+    std::sort(index.begin(), index.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (const auto& [path_str, levels] : index) {
+        if (abort_loading) break;
+        fs::path song_path(path_str);
+        fs::path rel = song_path.lexically_relative(parent);
+        if (rel.empty() || rel.begin()->string() == "..") continue;
+        fs::path sibling = parent / *rel.begin();
+        if (sibling == path) continue;
+        if (sibling.filename() == ".tier_sort") continue;
+        if (!fs::is_directory(sibling)) continue;
+
+        TierLookup lookup = tier_list.lookup(tier_list.folder_key_from_path(song_path));
+        int order = 0;
+        bool match = false;
+        if (lookup.oni == tier && levels[3] >= 0) { match = true; order = lookup.oni_order; }
+        if (lookup.ura == tier && levels[4] >= 0) {
+            if (!match || lookup.ura_order < order) order = lookup.ura_order;
+            match = true;
+        }
+        if (!match) continue;
+
+        hits.push_back(Hit{song_path, sibling, order});
+    }
+
+    std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+        if (a.order != b.order) return a.order < b.order;
+        return a.path.string() < b.path.string();
+    });
+
+    std::vector<fs::path> hit_paths;
+    hit_paths.reserve(hits.size());
+    for (const auto& h : hits) hit_paths.push_back(h.path);
+    auto preparsed = parse_songs_parallel(hit_paths, abort_loading);
+
+    int songs_added = 0;
+    for (const auto& h : hits) {
+        if (abort_loading) break;
+        if (songs_added > 0 && songs_added % 10 == 0)
+            enqueue_inline_box(make_back_box(parent, &inline_back_def));
+        auto song = make_song_box(h.path, box_def, take_parser(preparsed, h.path));
+        apply_song_genre(song.get(), parse_box_def(h.sibling));
+        song->preserve_order = true;
+        song->fade_in(266);
+        enqueue_inline_box(std::move(song));
+        songs_added++;
+    }
 }
 
 void Navigator::load_from_song_list(const fs::path& path, const BoxDef& box_def, bool mark_favorite) {
@@ -1142,6 +1238,17 @@ void Navigator::load_songs_inline_async(const fs::path path, BoxDef box_def) {
         }
         loading_complete = true;
         return;
+    } else if (box_def.collection == "TIER") {
+        if (tier_sort_filter) {
+            try {
+                load_collection_tier(path, box_def, *tier_sort_filter);
+            } catch (const std::exception& e) {
+                spdlog::error("Error loading tier collection {}: {}", path.string(), e.what());
+            }
+            tier_sort_filter.reset();
+        }
+        loading_complete = true;
+        return;
     } else if (box_def.collection == "NEW") {
         try {
             load_collection_new(path, box_def);
@@ -1227,6 +1334,18 @@ BoxDef Navigator::parse_box_def(const fs::path& path) {
 }
 
 BoxDef Navigator::parse_box_def_uncached(const fs::path& path) {
+    // Virtual Tier Sort folder injected at the Songs root (no Songs/ write).
+    if (path.filename() == ".tier_sort") {
+        BoxDef result;
+        result.name = "Tier Sort";
+        result.texture_index = TextureIndex::DEFAULT;
+        result.genre_index = GenreIndex::TIER;
+        result.collection = "TIER";
+        result.back_color = ray::Color{100, 70, 160, 255};
+        result.fore_color = ray::Color{50, 25, 100, 255};
+        return result;
+    }
+
     std::ifstream boxDef(path / "box.def");
     std::string line;
     BoxDef result;
@@ -1349,7 +1468,8 @@ void Navigator::begin_inline_load() {
         start_inline_prefetch(*pending_inline_path);
     bg_genre_pending = false;
     int approx_items = (pending_inline_box_def.collection == "RECOMMENDED" ||
-                        pending_inline_box_def.collection == "DIFFICULTY")
+                        pending_inline_box_def.collection == "DIFFICULTY" ||
+                        pending_inline_box_def.collection == "TIER")
                        ? 10
                        : pending_inline_folder->tja_count;
     items[open_index]->enter_box();
@@ -1434,6 +1554,10 @@ void Navigator::load_current_directory(const fs::path path) {
             awaiting_diff_sort = true;
             return;
         }
+        if (box_def.collection == "TIER") {
+            awaiting_tier_sort = true;
+            return;
+        }
 
         begin_inline_load();
         return;
@@ -1499,6 +1623,8 @@ bool Navigator::jump_to_song_path(const fs::path& song_path) {
     genre_bg.reset();
     awaiting_diff_sort = false;
     diff_sort_filter.reset();
+    awaiting_tier_sort = false;
+    tier_sort_filter.reset();
 
     auto load_full = [&](const fs::path& folder) {
         open_index = 0;
@@ -1622,8 +1748,12 @@ bool Navigator::has_child_folders(const fs::path& path) {
     if (!gen3::genre_of_path(path).empty()) return false;
 #endif
     if (is_gen4_root(path) || is_gen3_root(path)) return true;
+    if (path.filename() == ".tier_sort") return false;
 
-    for (const auto& entry : fs::directory_iterator(path)) {
+    std::error_code ec;
+    if (!fs::exists(path, ec) || !fs::is_directory(path, ec)) return false;
+
+    for (const auto& entry : fs::directory_iterator(path, fs::directory_options::skip_permission_denied, ec)) {
         if (fs::is_directory(entry.path()) && has_def_file(entry.path()) || is_osu_song_folder(entry.path()))
             return true;
         if (is_gen4_root(entry.path()) || !gen3_root_at(entry.path()).empty())
@@ -2106,7 +2236,7 @@ void Navigator::update(double current_ms) {
     }
 
     if (pending_inline_path) {
-        if (genre_bg.has_value() && genre_bg->is_finished() && !awaiting_diff_sort) {
+        if (genre_bg.has_value() && genre_bg->is_finished() && !awaiting_diff_sort && !awaiting_tier_sort) {
             inline_state->saved_folder_box = std::unique_ptr<FolderBox>(
                 static_cast<FolderBox*>(items[open_index].release())
             );

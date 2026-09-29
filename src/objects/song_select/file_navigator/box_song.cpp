@@ -2,6 +2,7 @@
 #include "../../../libs/text.h"
 #include "navigator.h"
 #include "../../../libs/audio.h"
+#include "../../../libs/tier_list.h"
 #include <thread>
 
 namespace {
@@ -118,6 +119,13 @@ SongBox::SongBox(const fs::path& path, const BoxDef& box_def, SongParser parser)
 
     is_favorite = false;
     diff_fade_in = (FadeAnimation*)tex.get_animation(12);
+
+    {
+        TierLookup tl = tier_list.lookup(tier_list.folder_key_from_path(path));
+        tier_oni = tl.oni;
+        tier_ura = tl.ura;
+    }
+
     refresh_scores();
 
     load_textures();
@@ -233,6 +241,14 @@ void SongBox::load_text() {
     }
     name_black = make_unique<OutlinedText>(text_name, (int)font_size, ray::WHITE, ray::BLACK, true, name_outline);
     bpm_text = make_unique<OutlinedText>("BPM\n" + std::to_string(static_cast<int>(parser.metadata.bpm)), tex.skin_config[SC::SONG_BOX_BPM].font_size, ray::WHITE, ray::BLACK, false);
+    {
+        std::string badge = tier();
+        if (!badge.empty())
+            tier_badge = std::make_unique<OutlinedText>(badge, (int)(22 * tex.screen_scale),
+                                                        ray::Color{255, 230, 120, 255}, ray::BLACK, false);
+        else
+            tier_badge.reset();
+    }
     if (exists(parser.metadata.preimage)) {
         if (preimage.has_value()) ray::UnloadTexture(preimage.value());
         preimage = ray::LoadTexture(parser.metadata.preimage.string().c_str());
@@ -368,6 +384,12 @@ void SongBox::draw_closed() {
         tex.draw_texture(tex.get_texture("yellow_box/ex_data_new_song_balloon_" + global_data.config->general.language), {.x=bx, .y=by, .fade=fade->attribute});
 
     draw_box_crown(bx, by, fade->attribute);
+
+    if (tier_badge) {
+        float tx = bx + tex.skin_config[SC::SONG_BOX_NAME].x - tier_badge->width * 0.5f;
+        float ty = by + 8.0f * tex.screen_scale;
+        tier_badge->draw({.x=tx, .y=ty, .fade=fade->attribute});
+    }
 }
 
 void SongBox::draw_box_crown(float x, float y, double fade_val) {
@@ -532,6 +554,12 @@ void SongBox::draw_open() {
             tex.draw_texture(t_star, {.x=diff*offset, .y=j*offset_y, .fade=open_fade->attribute});
         if (course.is_branching && ((int)(get_current_ms() / 1000)) % 2 == 0)
             tex.draw_texture(t_branch_indicator, {.x=diff*offset, .fade=open_fade->attribute});
+    }
+
+    if (tier_badge) {
+        float lx = (int)Difficulty::ONI * offset - tier_badge->width * 0.25f;
+        float ly = -24.0f * tex.screen_scale;
+        tier_badge->draw({.x=lx, .y=ly, .fade=open_fade->attribute});
     }
     draw_text();
 }

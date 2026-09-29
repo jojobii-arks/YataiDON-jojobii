@@ -290,6 +290,22 @@ std::optional<std::pair<int,int>> SongSelectPlayer::handle_input_diff_sort(DiffS
     return std::nullopt;
 }
 
+std::optional<int> SongSelectPlayer::handle_input_tier_sort(TierSortSelect* tier_sort_selector) {
+    if (is_l_kat_pressed(player_num) || ray::IsKeyPressed(ray::KEY_LEFT)) {
+        tier_sort_selector->input_left();
+        audio.play_sound("kat", VolumePreset::SOUND);
+    }
+    if (is_r_kat_pressed(player_num) || ray::IsKeyPressed(ray::KEY_RIGHT)) {
+        tier_sort_selector->input_right();
+        audio.play_sound("kat", VolumePreset::SOUND);
+    }
+    if (is_l_don_pressed(player_num) || is_r_don_pressed(player_num) || ray::IsKeyPressed(ray::KEY_ENTER)) {
+        audio.play_sound("don", VolumePreset::SOUND);
+        return tier_sort_selector->input_select();
+    }
+    return std::nullopt;
+}
+
 // Strip leading / trailing blanks: ASCII whitespace and the ideographic space U+3000.
 static std::string trim_search(std::string s) {
     auto blank_at = [&](size_t i, size_t& len) {

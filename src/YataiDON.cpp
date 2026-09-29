@@ -13,6 +13,7 @@
 #include "libs/screen.h"
 #include "libs/script.h"
 #include "libs/song_parser.h"
+#include "libs/tier_list.h"
 
 #ifdef _WIN32
 #include "platform/platform_windows.h"
@@ -384,6 +385,7 @@ int main(int argc, char* argv[]) {
     global_data.config = new Config(get_config());
     Screens initial_screen = check_args(argc, argv);
     init_scores_manager(global_data.config->general.score_method == ScoreMethod::GEN3);
+    init_tier_list();
     unsigned int flags = ray::FLAG_WINDOW_RESIZABLE;
     if (global_data.config->video.vsync) {
         flags |= ray::FLAG_VSYNC_HINT;

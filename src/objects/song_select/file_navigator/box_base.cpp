@@ -186,6 +186,8 @@ void BaseBox::draw_closed() {
         tex.draw_texture(t_genre_overlay, {.x=bx, .y=by, .fade=fade->attribute});
     if (genre_index == GenreIndex::DIFFICULTY)
         tex.draw_texture(t_diff_overlay,  {.x=bx, .y=by, .fade=fade->attribute});
+    if (genre_index == GenreIndex::TIER)
+        tex.draw_texture(t_diff_overlay,  {.x=bx, .y=by, .fade=fade->attribute});
 }
 
 void BaseBox::draw_open() {

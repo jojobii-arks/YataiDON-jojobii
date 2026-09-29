@@ -365,10 +365,12 @@ void FolderBox::draw_open_fg(float fade) {
         tex.draw_texture(t_genre_overlay_large, {.fade=fade});
     if (genre_index == GenreIndex::DIFFICULTY)
         tex.draw_texture(t_diff_overlay_large,  {.fade=fade});
+    if (genre_index == GenreIndex::TIER)
+        tex.draw_texture(t_diff_overlay_large,  {.fade=fade});
 
     // Song count: tja_count_text holds the localized "song_count" template
     // ("全{0}曲", "{0} Songs", ...) with {0} already substituted.
-    if (genre_index != GenreIndex::DIFFICULTY) {
+    if (genre_index != GenreIndex::DIFFICULTY && genre_index != GenreIndex::TIER) {
         tex.draw_texture(t_song_count_back, {.fade=std::min(fade, 0.5f)});
 
         float dest_width = std::min(tex.skin_config[SC::SONG_TJA_COUNT].width,
