@@ -191,6 +191,9 @@ public:
     void move_right();
     void skip_left();
     void skip_right();
+    // Uniform random jump among SongBox entries in the currently open inline folder.
+    // No-op (returns false) on the top genre/folder list, while streaming/closing, or if no songs.
+    bool move_to_random_song();
 
     void update(double current_ms);
     void draw_background();

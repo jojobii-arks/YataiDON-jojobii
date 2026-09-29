@@ -254,6 +254,14 @@ SongSelectState SongSelectPlayer::handle_input_browsing(double current_ms) {
         }
     }
 
+    if (ray::IsKeyPressed(ray::KEY_R)) {
+        if (navigator.move_to_random_song()) {
+            audio.play_sound("skip", VolumePreset::SOUND);
+            last_moved = current_ms;
+            navigated = true;
+        }
+    }
+
     if (!navigated && (l_don || r_don)) {
         BaseBox* item = navigator.get_current_item();
         if (navigator.is_directory(item) && item->collection == COLLECTIONS[5]) {

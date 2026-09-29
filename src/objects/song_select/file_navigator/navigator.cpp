@@ -2014,6 +2014,30 @@ void Navigator::move_right() { navigate(+1,  false); }
 void Navigator::skip_left()  { navigate(-10, true);  }
 void Navigator::skip_right() { navigate(+10, true);  }
 
+bool Navigator::move_to_random_song() {
+    if (!inline_state.has_value() || inline_streaming || inline_state->fading_out)
+        return false;
+
+    int first = inline_state->first_song_index;
+    int end   = first + inline_state->songs_count;
+    if (first < 0 || end > (int)items.size()) return false;
+
+    std::vector<int> song_indices;
+    for (int i = first; i < end; i++)
+        if (dynamic_cast<SongBox*>(items[i].get()))
+            song_indices.push_back(i);
+
+    if (song_indices.empty()) return false;
+
+    static std::mt19937 rng{std::random_device{}()};
+    int target = song_indices[
+        std::uniform_int_distribution<size_t>(0, song_indices.size() - 1)(rng)];
+    if (target == open_index) return true;
+
+    navigate(target - open_index, true);
+    return true;
+}
+
 void Navigator::enter_diff_select() {
     items[open_index]->enter_box();
     for (int i = 0; i < items.size(); i++) {
