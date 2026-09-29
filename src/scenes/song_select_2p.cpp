@@ -2,6 +2,7 @@
 #include "../libs/input.h"
 #include <algorithm>
 #include <filesystem>
+#include <chrono>
 
 void SongSelect2PScreen::on_screen_start() {
     SongSelectScreen::on_screen_start();
@@ -93,10 +94,17 @@ std::optional<Screens> SongSelect2PScreen::update() {
     indicator->update(current_time);
     if (search_box) search_box->update(current_time);
 
+    if (stats_future.valid() &&
+        stats_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        cached_stats = stats_future.get();
+        set_song_select_progress_stats(&cached_stats);
+    }
+
     if (navigator.diff_sort_ready() && !diff_sort_selector) {
         if (stats_future.valid()) {
             stats_future.wait();
             cached_stats = stats_future.get();
+            set_song_select_progress_stats(&cached_stats);
         }
         diff_sort_selector.emplace(cached_stats, last_diff_sort.first, last_diff_sort.second,
                                    script.get(), last_diff_order);

@@ -14,6 +14,80 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include "../../../libs/scores.h"
+
+void CourseStats::add_score(const Score& score) {
+    int r = static_cast<int>(score.rank);
+    if (r > static_cast<int>(Rank::_NONE) && r < static_cast<int>(rank_counts.size()))
+        rank_counts[r]++;
+
+    int c = static_cast<int>(score.crown);
+    if (c > static_cast<int>(Crown::NONE) && c < static_cast<int>(crown_counts.size()))
+        crown_counts[c]++;
+
+    if (score.crown >= Crown::CLEAR) clears++;
+    if (score.crown >= Crown::FC)    full_combos++;
+    if (score.crown == Crown::DFC)   dfcs++;
+}
+
+CourseStats& CourseStats::operator+=(const CourseStats& o) {
+    total += o.total;
+    clears += o.clears;
+    full_combos += o.full_combos;
+    dfcs += o.dfcs;
+    for (size_t i = 0; i < rank_counts.size(); i++)
+        rank_counts[i] += o.rank_counts[i];
+    for (size_t i = 0; i < crown_counts.size(); i++)
+        crown_counts[i] += o.crown_counts[i];
+    return *this;
+}
+
+namespace {
+Statistics* g_song_select_progress_stats = nullptr;
+std::optional<std::pair<int, int>> g_active_diff_sort;
+}
+
+CourseStats sum_course_stats(const Statistics& stats, int course) {
+    CourseStats sum;
+    auto add_course = [&](int c) {
+        auto cit = stats.find(c);
+        if (cit == stats.end()) return;
+        for (const auto& [_, level_stats] : cit->second)
+            sum += level_stats;
+    };
+    // OpenTaiko pad: Oni (3) and Ura/Edit (4) are shown as one combined column.
+    if (course == 3 || course == 4) {
+        add_course(3);
+        add_course(4);
+    } else {
+        add_course(course);
+    }
+    return sum;
+}
+
+CourseStats stats_for_course_star(const Statistics& stats, int course, int star) {
+    auto cit = stats.find(course);
+    if (cit == stats.end()) return CourseStats{};
+    auto lit = cit->second.find(star);
+    if (lit == cit->second.end()) return CourseStats{};
+    return lit->second;
+}
+
+void set_song_select_progress_stats(Statistics* stats) {
+    g_song_select_progress_stats = stats;
+}
+
+Statistics* song_select_progress_stats() {
+    return g_song_select_progress_stats;
+}
+
+void set_song_select_active_diff_sort(std::optional<std::pair<int, int>> filter) {
+    g_active_diff_sort = std::move(filter);
+}
+
+std::optional<std::pair<int, int>> song_select_active_diff_sort() {
+    return g_active_diff_sort;
+}
 
 // Song Search normalisation: ASCII is lower-cased, full-width ASCII (U+FF01..FF5E) becomes
 // half-width, and simplified / traditional Chinese characters are folded to their Japanese
@@ -295,6 +369,8 @@ void Navigator::init(std::vector<fs::path> songs_paths) {
         genre_bg_end_pos.reset();
         awaiting_diff_sort = false;
         diff_sort_filter.reset();
+        last_diff_sort_result.reset();
+        set_song_select_active_diff_sort(std::nullopt);
         awaiting_tier_sort = false;
         tier_sort_filter.reset();
         reopen_folder_path.reset();
@@ -322,6 +398,8 @@ void Navigator::init(std::vector<fs::path> songs_paths) {
             genre_bg.reset();
             awaiting_diff_sort = false;
             diff_sort_filter.reset();
+            last_diff_sort_result.reset();
+            set_song_select_active_diff_sort(std::nullopt);
             awaiting_tier_sort = false;
             tier_sort_filter.reset();
             load_all_roots();
@@ -390,6 +468,8 @@ void Navigator::collapse_inline_now() {
     is_processing = false;
     inline_streaming = false;
     loading_complete = false;
+    last_diff_sort_result.reset();
+    set_song_select_active_diff_sort(std::nullopt);
 }
 
 void Navigator::join_loader() {
@@ -881,6 +961,7 @@ void Navigator::load_collection_difficulty(const fs::path& path, const BoxDef& b
 
 void Navigator::apply_diff_sort(int course, int level, int order) {
     last_diff_sort_result = {course, level};
+    set_song_select_active_diff_sort(std::make_optional(std::pair<int, int>{course, level}));
     diff_sort_filter      = std::array<int,3>{course, level, order};
     awaiting_diff_sort    = false;
     begin_inline_load();
@@ -889,6 +970,8 @@ void Navigator::apply_diff_sort(int course, int level, int order) {
 void Navigator::cancel_diff_sort() {
     awaiting_diff_sort = false;
     diff_sort_filter.reset();
+    last_diff_sort_result.reset();
+    set_song_select_active_diff_sort(std::nullopt);
     inline_state.reset();
     pending_inline_path.reset();
     pending_inline_folder = nullptr;
@@ -2432,10 +2515,7 @@ Statistics Navigator::get_statistics(const fs::path& path) {
                 auto score = scores_manager.get_score(hash, course, scores_manager.player_1);
                 if (!score.has_value()) continue;
 
-                if (score->crown >= Crown::FC)
-                    cs.full_combos++;
-                if (score->crown >= Crown::CLEAR)
-                    cs.clears++;
+                cs.add_score(*score);
             }
         }
     }

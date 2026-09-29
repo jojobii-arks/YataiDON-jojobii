@@ -2,16 +2,26 @@
 
 #include "box_song.h"
 #include "genre_bg.h"
+#include "../../../libs/scores.h"
 #include <queue>
 #include <array>
 #include <unordered_map>
 
 class SongSelectScript;
 
+// Per (course, ★ level) library progress — see docs/difficulty_progress_stats.md.
+// rank_counts / crown_counts are exclusive buckets (best score only).
+// clears / full_combos / dfcs are derived for legacy C++ draw + convenience.
 struct CourseStats {
-    int total       = 0;
-    int full_combos = 0;
-    int clears      = 0;
+    int total = 0;
+    std::array<int, 8> rank_counts{};   // index = (int)Rank
+    std::array<int, 4> crown_counts{};  // index = (int)Crown
+    int clears      = 0;  // crown >= CLEAR
+    int full_combos = 0;  // crown >= FC
+    int dfcs        = 0;  // crown == DFC
+
+    void add_score(const Score& score);
+    CourseStats& operator+=(const CourseStats& o);
 };
 
 struct InlineState {
@@ -23,6 +33,18 @@ struct InlineState {
 };
 
 using Statistics = std::map<int, std::map<int, CourseStats>>;
+
+// Published by SongSelectScreen while the scene is live so Lua can draw the
+// rank/crown progress pad without opening difficulty sort.
+CourseStats sum_course_stats(const Statistics& stats, int course);
+CourseStats stats_for_course_star(const Statistics& stats, int course, int star);
+void set_song_select_progress_stats(Statistics* stats);  // nullptr to clear
+Statistics* song_select_progress_stats();
+
+// Active post-sort filter (course, ★) while browsing a DIFFICULTY collection list.
+// Cleared when the inline folder collapses / sort is cancelled.
+void set_song_select_active_diff_sort(std::optional<std::pair<int, int>> filter);
+std::optional<std::pair<int, int>> song_select_active_diff_sort();
 
 class Navigator {
 private:

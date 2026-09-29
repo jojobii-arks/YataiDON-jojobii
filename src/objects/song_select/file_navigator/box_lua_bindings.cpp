@@ -117,7 +117,50 @@ void register_song_select_lua_bindings(sol::state& lua) {
         "song_num",     [](DiffSortSelect& s) { return s.lua_song_num(); },
         "phase",        [](DiffSortSelect& s) { return s.lua_phase(); },
         "alpha",        [](DiffSortSelect& s) { return s.lua_alpha(); },
-        "arrow_offset", [](DiffSortSelect& s, int row) { return s.lua_arrow_offset(row); }
+        "arrow_offset", [](DiffSortSelect& s, int row) { return s.lua_arrow_offset(row); },
+        // Library progress pad (docs/difficulty_progress_stats.md)
+        // Diff-sort: exact course + ★, never merges Oni/Ura (browsing pad does).
+        "stats", [](DiffSortSelect& s) -> sol::table {
+            CourseStats cs = s.lua_stats();
+            sol::table t = script_manager.lua->create_table();
+            int course = std::max(0, std::min(4, s.lua_diff() - 1));
+            t["course"] = course;
+            t["star"] = s.lua_star();
+            t["merged_ura"] = false;
+            t["total"] = cs.total;
+            t["clears"] = cs.clears;
+            t["full_combos"] = cs.full_combos;
+            t["dfcs"] = cs.dfcs;
+            sol::table ranks = script_manager.lua->create_table();
+            for (int r = 1; r <= 7; r++) ranks[r] = cs.rank_counts[r];
+            t["ranks"] = ranks;
+            sol::table crowns = script_manager.lua->create_table();
+            crowns[1] = cs.crown_counts[1];
+            crowns[2] = cs.crown_counts[2];
+            crowns[3] = cs.crown_counts[3];
+            t["crowns"] = crowns;
+            return t;
+        },
+        "stats_course", [](DiffSortSelect& s) -> sol::table {
+            CourseStats cs = s.lua_stats_course();
+            sol::table t = script_manager.lua->create_table();
+            int course = std::max(0, std::min(4, s.lua_diff() - 1));
+            t["course"] = course;
+            t["merged_ura"] = false;
+            t["total"] = cs.total;
+            t["clears"] = cs.clears;
+            t["full_combos"] = cs.full_combos;
+            t["dfcs"] = cs.dfcs;
+            sol::table ranks = script_manager.lua->create_table();
+            for (int r = 1; r <= 7; r++) ranks[r] = cs.rank_counts[r];
+            t["ranks"] = ranks;
+            sol::table crowns = script_manager.lua->create_table();
+            crowns[1] = cs.crown_counts[1];
+            crowns[2] = cs.crown_counts[2];
+            crowns[3] = cs.crown_counts[3];
+            t["crowns"] = crowns;
+            return t;
+        }
     );
 
     lua.new_usertype<SongSelectPlayer>("SongSelectPlayer",

@@ -10,6 +10,7 @@
 #include "webcam.h"
 #include "screen.h"
 #include "../objects/song_select/file_navigator/box_lua_bindings.h"
+#include "../objects/song_select/file_navigator/navigator.h"
 #include "../objects/enums.h"
 #include <spdlog/spdlog.h>
 
@@ -670,6 +671,71 @@ tex.set_function("begin_scissor", [](float x, float y, float w, float h) {
 
     tex.set_function("songs_played", []() -> int {
         return global_data.songs_played;
+    });
+
+    // Library rank/crown totals for song-select progress pad (docs/difficulty_progress_stats.md).
+    // course: 0..4 (Easy..Ura). star: 1..10 — when set, exact course+★ (no Oni/Ura merge).
+    // Omit both → active post-sort filter if any, else last_difficulty (merged Oni/Ura).
+    tex.set_function("progress_stats", [](sol::optional<int> course_opt,
+                                          sol::optional<int> star_opt) -> sol::object {
+        Statistics* all = song_select_progress_stats();
+        if (!all) return sol::lua_nil;
+
+        auto active = song_select_active_diff_sort();
+        int course = 3;
+        std::optional<int> star;
+        if (star_opt.has_value()) star = *star_opt;
+
+        if (course_opt.has_value()) {
+            course = std::clamp(*course_opt, 0, 4);
+        } else if (active) {
+            course = active->first;
+            if (!star.has_value()) star = active->second;
+        } else {
+            int idx = (int)global_data.player_num;
+            if (idx >= 0 && idx < (int)global_data.last_difficulty.size()) {
+                int last = global_data.last_difficulty[idx];
+                if (last >= 0 && last <= 4) course = last;
+            }
+        }
+
+        sol::table t = script_manager.lua->create_table();
+        CourseStats cs;
+        if (star.has_value()) {
+            int s = std::clamp(*star, 1, 10);
+            cs = stats_for_course_star(*all, course, s);
+            t["course"] = course;
+            t["star"] = s;
+            t["merged_ura"] = false;
+        } else {
+            cs = sum_course_stats(*all, course);
+            // Browsing pad only: Oni+Ura merge (diff-sort / filtered list use star above).
+            t["course"] = (course == 3 || course == 4) ? 3 : course;
+            t["merged_ura"] = (course == 3 || course == 4);
+        }
+        t["total"] = cs.total;
+        t["clears"] = cs.clears;
+        t["full_combos"] = cs.full_combos;
+        t["dfcs"] = cs.dfcs;
+        sol::table ranks = script_manager.lua->create_table();
+        for (int r = 1; r <= 7; r++) ranks[r] = cs.rank_counts[r];
+        t["ranks"] = ranks;
+        sol::table crowns = script_manager.lua->create_table();
+        crowns[1] = cs.crown_counts[1];
+        crowns[2] = cs.crown_counts[2];
+        crowns[3] = cs.crown_counts[3];
+        t["crowns"] = crowns;
+        return t;
+    });
+
+    // { course=0..4, star=1..10 } while browsing a post-diff-sort list; nil otherwise.
+    tex.set_function("diff_sort_filter", []() -> sol::object {
+        auto active = song_select_active_diff_sort();
+        if (!active) return sol::lua_nil;
+        sol::table t = script_manager.lua->create_table();
+        t["course"] = active->first;
+        t["star"] = active->second;
+        return t;
     });
 
     tex.set_function("song_limit", []() -> int {

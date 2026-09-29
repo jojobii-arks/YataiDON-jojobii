@@ -19,6 +19,8 @@ private:
 
     Statistics statistics;
     std::map<int, std::array<int, 3>> diff_sort_sum_stat;
+    // course -> summed CourseStats across ★1..10 (for Lua course-wide pad)
+    std::map<int, CourseStats> course_sum_stat;
 
     TextureResizeAnimation* bg_resize;
     FadeAnimation* diff_fade_in;
@@ -98,7 +100,7 @@ public:
     std::optional<std::array<int, 3>> take_result();
 
     int  lua_session() const     { return session; }         // 0..2 (3 = all decided)
-    int  lua_diff() const        { return sort_param[0]; }   // 1..5 (5 = oni-ura)
+    int  lua_diff() const        { return sort_param[0]; }   // 1..5 → EASY..URA
     int  lua_star() const        { return sort_param[1]; }   // 1..10
     int  lua_order() const       { return sort_param[2]; }   // 1..4
     int  lua_diff_count() const  { return diff_count; }
@@ -108,4 +110,9 @@ public:
     int   lua_phase() const;
     float lua_alpha() const;
     float lua_arrow_offset(int row) const;
+
+    // Progress pad — see docs/difficulty_progress_stats.md
+    // Exact course (+ ★ for lua_stats); never merges Oni/Ura.
+    CourseStats lua_stats() const;         // current course + ★
+    CourseStats lua_stats_course() const;  // current course, all ★ summed
 };

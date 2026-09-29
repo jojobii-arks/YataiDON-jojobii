@@ -2,6 +2,7 @@
 #include "../libs/input.h"
 #include "../libs/network.h"
 #include <filesystem>
+#include <chrono>
 
 void SongSelectScreen::on_screen_start() {
     Screen::on_screen_start();
@@ -270,10 +271,19 @@ std::optional<Screens> SongSelectScreen::update() {
     indicator->update(current_time);
     if (search_box) search_box->update(current_time);
 
+    // Collect library progress stats as soon as the async scan finishes so the
+    // Nijiiro progress pad can draw without opening difficulty sort.
+    if (stats_future.valid() &&
+        stats_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        cached_stats = stats_future.get();
+        set_song_select_progress_stats(&cached_stats);
+    }
+
     if (navigator.diff_sort_ready() && !diff_sort_selector) {
         if (stats_future.valid()) {
             stats_future.wait();
             cached_stats = stats_future.get();
+            set_song_select_progress_stats(&cached_stats);
         }
         diff_sort_selector.emplace(cached_stats, last_diff_sort.first, last_diff_sort.second,
                                    script.get(), last_diff_order);
@@ -362,6 +372,7 @@ std::optional<Screens> SongSelectScreen::update() {
 
 Screens SongSelectScreen::on_screen_end(Screens next_screen) {
     if (stats_future.valid()) stats_future.wait();
+    set_song_select_progress_stats(nullptr);
     navigator.join_loader();
     ray::UnloadShader(shader);
     return Screen::on_screen_end(next_screen);

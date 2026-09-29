@@ -36,12 +36,15 @@ DiffSortSelect::DiffSortSelect(Statistics statistics, int prev_diff, int prev_le
 
     for (const auto& [course, levels] : statistics) {
         std::array<int, 3> sums = {0, 0, 0};
+        CourseStats course_sum;
         for (const auto& [level, stats] : levels) {
             sums[0] += stats.total;
             sums[1] += stats.clears;
             sums[2] += stats.full_combos;
+            course_sum += stats;
         }
         diff_sort_sum_stat[course] = sums;
+        course_sum_stat[course] = course_sum;
     }
 
     if (one_menu_sort) {
@@ -138,6 +141,42 @@ void DiffSortSelect::one_menu_sort_change_param(int move) {
     one_menu_sort_refresh_song_num();
     arrow_dir[session] = (move > 0) ? 1 : -1;
     arrow_t0[session]  = now_ms;
+}
+
+namespace {
+CourseStats stats_for_course(const Statistics& statistics, int course) {
+    CourseStats sum;
+    auto cit = statistics.find(course);
+    if (cit == statistics.end()) return sum;
+    for (const auto& [_, level_stats] : cit->second)
+        sum += level_stats;
+    return sum;
+}
+}  // namespace
+
+CourseStats DiffSortSelect::lua_stats_course() const {
+    int course = one_menu_sort
+        ? std::min(sort_param[0], 5) - 1
+        : (selected_box == 5 ? prev_diff : selected_box);
+    if (course < 0) course = 0;
+    // Diff-sort pad: exact course only (no Oni+Ura merge — that is browsing-only).
+    return stats_for_course(statistics, course);
+}
+
+CourseStats DiffSortSelect::lua_stats() const {
+    if (one_menu_sort) {
+        // Always the course + ★ currently shown in the sort window (matches song_num).
+        int course = std::min(sort_param[0], 5) - 1;
+        if (course < 0) course = 0;
+        return stats_for_course_star(statistics, course, sort_param[1]);
+    }
+    if (in_level_select || selected_box == 5) {
+        int course = selected_box == 5 ? prev_diff : selected_box;
+        int level = selected_box == 5 ? prev_level : selected_level;
+        if (course < 0) course = 0;
+        return stats_for_course_star(statistics, course, level);
+    }
+    return lua_stats_course();
 }
 
 std::optional<std::array<int, 3>> DiffSortSelect::take_result() {
