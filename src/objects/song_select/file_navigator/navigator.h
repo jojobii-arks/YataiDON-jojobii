@@ -35,6 +35,8 @@ private:
     // song path -> level per course 0..4 (-1 = course absent), filled by the same scan; the
     // difficulty filter reads this instead of re-parsing every chart on disk
     std::unordered_map<std::string, std::array<int, 5>> song_levels;
+    // song path -> TITLE* then folder key, for tier lookup (title is source of truth)
+    std::unordered_map<std::string, std::vector<std::string>> song_tier_keys;
     int open_index;
     bool is_init      = false;
     bool is_preloaded = false;
@@ -100,8 +102,9 @@ private:
     std::optional<std::pair<int,int>> last_diff_sort_result;
 
     bool awaiting_tier_sort = false;
-    std::optional<std::string> tier_sort_filter;
-    std::string last_tier_sort;
+    // Selected (star-level, tier-letter) filter while loading the Tier Sort collection.
+    std::optional<std::pair<int, std::string>> tier_sort_filter;
+    std::pair<int, std::string> last_tier_sort = {0, ""};
 
     bool vertical_gallery = false;
 
@@ -134,7 +137,7 @@ private:
     void load_current_directory_async(const fs::path path);
     void load_all_roots();
     void load_collection_difficulty(const fs::path& path, const BoxDef& box_def, int course, int level, int order = 1);
-    void load_collection_tier(const fs::path& path, const BoxDef& box_def, const std::string& tier);
+    void load_collection_tier(const fs::path& path, const BoxDef& box_def, int level, const std::string& tier);
     void load_from_song_list(const fs::path& path, const BoxDef& box_def, bool mark_favorite);
     void load_collection_new(const fs::path& path, const BoxDef& box_def);
     void load_collection_recommended(const fs::path& path, const BoxDef& box_def);
@@ -182,10 +185,11 @@ public:
 
     bool needs_tier_sort() const { return awaiting_tier_sort; }
     bool tier_sort_ready() { return awaiting_tier_sort; }
-    void apply_tier_sort(const std::string& tier);
+    void apply_tier_sort(int level, const std::string& tier);
     void cancel_tier_sort();
-    std::unordered_map<std::string, int> get_tier_statistics();
-    const std::string& last_tier_sort_result() const { return last_tier_sort; }
+    // Per star-level local chart counts keyed by tier letter (★6..★10).
+    std::unordered_map<int, std::unordered_map<std::string, int>> get_tier_statistics();
+    const std::pair<int, std::string>& last_tier_sort_result() const { return last_tier_sort; }
 
     void load_current_directory(const fs::path path);
     bool jump_to_song(const std::string& hash);

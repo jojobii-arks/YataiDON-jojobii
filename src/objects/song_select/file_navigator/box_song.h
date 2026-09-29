@@ -36,7 +36,8 @@ public:
     bool is_ura = false;
     GenreIndex song_genre_index = GenreIndex::DEFAULT;
     std::string song_genre_label;
-    // Community clear-tier letters from taiko.wiki (empty if unknown / custom).
+    // Community clear-tier letters from taiko.wiki at each course's star level
+    // (empty if unknown / custom / level outside ★6..★10).
     std::string tier_oni;
     std::string tier_ura;
     std::unique_ptr<OutlinedText> tier_badge;

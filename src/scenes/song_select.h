@@ -45,7 +45,7 @@ protected:
     void apply_sort_window_result();
 
     std::optional<TierSortSelect> tier_sort_selector;
-    std::string last_tier_sort;
+    std::pair<int, std::string> last_tier_sort = {0, ""};
 
     std::optional<SearchBox> search_box;
 

@@ -230,9 +230,26 @@ void Navigator::preload(std::vector<fs::path> songs_paths) {
                             std::lock_guard<std::mutex> lock(map_mutex);
                             song_files[{parsed_entry.metadata.title["en"], parsed_entry.metadata.subtitle["en"]}] = file;
                             std::string text;
-                            for (const auto& [lang, t] : parsed_entry.metadata.title)    text += t + '\n';
+                            std::vector<std::string> tier_keys;
+                            auto push_tier_key = [&](const std::string& s) {
+                                if (s.empty()) return;
+                                for (const auto& k : tier_keys)
+                                    if (TierListManager::normalize_key(k) == TierListManager::normalize_key(s)) return;
+                                tier_keys.push_back(s);
+                            };
+                            // TITLE first (en / ja / others), folder last — same order as SongBox.
+                            if (auto it = parsed_entry.metadata.title.find("en"); it != parsed_entry.metadata.title.end())
+                                push_tier_key(it->second);
+                            if (auto it = parsed_entry.metadata.title.find("ja"); it != parsed_entry.metadata.title.end())
+                                push_tier_key(it->second);
+                            for (const auto& [lang, t] : parsed_entry.metadata.title) {
+                                text += t + '\n';
+                                push_tier_key(t);
+                            }
                             for (const auto& [lang, t] : parsed_entry.metadata.subtitle) text += t + '\n';
+                            push_tier_key(tier_list.folder_key_from_path(file));
                             song_search_text[file.string()] = search_fold(text);
+                            song_tier_keys[file.string()] = std::move(tier_keys);
                             std::array<int, 5> lv; lv.fill(-1);
                             for (const auto& [course, data] : parsed_entry.metadata.course_data)
                                 if (course >= 0 && course <= 4) lv[course] = (int)data.level;
@@ -877,9 +894,9 @@ void Navigator::cancel_diff_sort() {
     pending_inline_folder = nullptr;
 }
 
-void Navigator::apply_tier_sort(const std::string& tier) {
-    last_tier_sort   = tier;
-    tier_sort_filter = tier;
+void Navigator::apply_tier_sort(int level, const std::string& tier) {
+    last_tier_sort   = {level, tier};
+    tier_sort_filter = std::pair<int, std::string>{level, tier};
     awaiting_tier_sort = false;
     begin_inline_load();
 }
@@ -892,16 +909,35 @@ void Navigator::cancel_tier_sort() {
     pending_inline_folder = nullptr;
 }
 
-std::unordered_map<std::string, int> Navigator::get_tier_statistics() {
+std::unordered_map<int, std::unordered_map<std::string, int>> Navigator::get_tier_statistics() {
     wait_for_song_files();
-    std::vector<std::string> folders;
-    folders.reserve(song_levels.size());
-    for (const auto& [path_str, _] : song_levels)
-        folders.push_back(tier_list.folder_key_from_path(fs::path(path_str)));
-    return tier_list.count_local(folders);
+    std::unordered_map<int, std::unordered_map<std::string, int>> result;
+    for (int level : tier_list.levels()) {
+        auto& counts = result[level];
+        for (const auto& t : tier_list.tiers_for_level(level))
+            counts[t] = 0;
+    }
+    for (const auto& [path_str, levels] : song_levels) {
+        std::vector<std::string> keys;
+        if (auto kit = song_tier_keys.find(path_str); kit != song_tier_keys.end())
+            keys = kit->second;
+        else
+            keys.push_back(tier_list.folder_key_from_path(fs::path(path_str)));
+        for (int course : {3, 4}) {
+            int level = levels[course];
+            if (level < 0) continue;
+            auto lit = result.find(level);
+            if (lit == result.end()) continue;
+            TierLookup lookup = tier_list.lookup_first(keys, level);
+            const std::string& tier = (course == 4) ? lookup.ura : lookup.oni;
+            if (tier.empty()) continue;
+            lit->second[tier]++;
+        }
+    }
+    return result;
 }
 
-void Navigator::load_collection_tier(const fs::path& path, const BoxDef& box_def, const std::string& tier) {
+void Navigator::load_collection_tier(const fs::path& path, const BoxDef& box_def, int level, const std::string& tier) {
     struct Hit { fs::path path; fs::path sibling; int order; };
     std::vector<Hit> hits;
 
@@ -920,11 +956,17 @@ void Navigator::load_collection_tier(const fs::path& path, const BoxDef& box_def
         if (sibling.filename() == ".tier_sort") continue;
         if (!fs::is_directory(sibling)) continue;
 
-        TierLookup lookup = tier_list.lookup(tier_list.folder_key_from_path(song_path));
+        std::vector<std::string> keys;
+        if (auto kit = song_tier_keys.find(path_str); kit != song_tier_keys.end())
+            keys = kit->second;
+        else
+            keys.push_back(tier_list.folder_key_from_path(song_path));
+        TierLookup lookup = tier_list.lookup_first(keys, level);
         int order = 0;
         bool match = false;
-        if (lookup.oni == tier && levels[3] >= 0) { match = true; order = lookup.oni_order; }
-        if (lookup.ura == tier && levels[4] >= 0) {
+        // Chart star level must match the selected wiki level.
+        if (lookup.oni == tier && levels[3] == level) { match = true; order = lookup.oni_order; }
+        if (lookup.ura == tier && levels[4] == level) {
             if (!match || lookup.ura_order < order) order = lookup.ura_order;
             match = true;
         }
@@ -1241,7 +1283,7 @@ void Navigator::load_songs_inline_async(const fs::path path, BoxDef box_def) {
     } else if (box_def.collection == "TIER") {
         if (tier_sort_filter) {
             try {
-                load_collection_tier(path, box_def, *tier_sort_filter);
+                load_collection_tier(path, box_def, tier_sort_filter->first, tier_sort_filter->second);
             } catch (const std::exception& e) {
                 spdlog::error("Error loading tier collection {}: {}", path.string(), e.what());
             }

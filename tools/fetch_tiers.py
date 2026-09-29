@@ -35,6 +35,12 @@ def get_json(url: str):
         return json.load(resp)
 
 
+def _windows_folder_alias(name: str) -> str:
+    """Strip characters Windows rejects in folder names (e.g. ':' in '11:54PM')."""
+    out = "".join(ch for ch in name if ch not in '<>:"/\\|?*')
+    return out.strip()
+
+
 def match_keys(song: dict) -> list[str]:
     """Folder-name candidates that ESE charts may use for this song."""
     keys: list[str] = []
@@ -44,6 +50,12 @@ def match_keys(song: dict) -> list[str]:
             val = val.strip()
             if val and val not in keys:
                 keys.append(val)
+    # Also index Windows-sanitized forms so folders like
+    # "1154PM, Prelude…" still hit wiki "11:54PM, Prelude…".
+    for base in list(keys):
+        alias = _windows_folder_alias(base)
+        if alias and alias not in keys:
+            keys.append(alias)
     return keys
 
 

@@ -137,8 +137,24 @@ TierLookup TierListManager::lookup(const std::string& romaji_or_folder, int leve
     return lit->second;
 }
 
+TierLookup TierListManager::lookup_first(const std::vector<std::string>& keys, int level) const {
+    for (const auto& key : keys) {
+        if (key.empty()) continue;
+        TierLookup l = lookup(key, level);
+        if (!l.oni.empty() || !l.ura.empty()) return l;
+    }
+    return {};
+}
+
 std::string TierListManager::tier_for(const std::string& romaji_or_folder, int course, int level) const {
     TierLookup l = lookup(romaji_or_folder, level);
+    if (course == 4) return l.ura;
+    if (course == 3) return l.oni;
+    return {};
+}
+
+std::string TierListManager::tier_for_first(const std::vector<std::string>& keys, int course, int level) const {
+    TierLookup l = lookup_first(keys, level);
     if (course == 4) return l.ura;
     if (course == 3) return l.oni;
     return {};

@@ -63,7 +63,7 @@ public:
     SongSelectState handle_input_browsing(double current_ms);
     SongSelectState handle_input_selecting();
     std::optional<std::pair<int,int>> handle_input_diff_sort(DiffSortSelect* diff_sort_selector);
-    std::optional<int> handle_input_tier_sort(TierSortSelect* tier_sort_selector);
+    std::optional<std::pair<int, std::string>> handle_input_tier_sort(TierSortSelect* tier_sort_selector);
     std::optional<std::string> handle_input_search();
 
     void draw_selector(bool is_half, float fade_in);

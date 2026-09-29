@@ -91,16 +91,15 @@ void SongSelectScreen::handle_input_tier_sorting() {
     if (!tier_sort_selector) return;
     auto result = player->handle_input_tier_sort(&tier_sort_selector.value());
     if (!result) return;
-    if (*result < 0) {
+    if (result->first < 0) {
         tier_sort_selector.reset();
         state = SongSelectState::BROWSING;
         navigator.cancel_tier_sort();
     } else {
-        std::string tier = tier_sort_selector->tier_at(*result);
-        last_tier_sort = tier;
+        last_tier_sort = *result;
         tier_sort_selector.reset();
         state = SongSelectState::BROWSING;
-        navigator.apply_tier_sort(tier);
+        navigator.apply_tier_sort(result->first, result->second);
     }
 }
 
@@ -286,7 +285,8 @@ std::optional<Screens> SongSelectScreen::update() {
     }
 
     if (navigator.tier_sort_ready() && !tier_sort_selector) {
-        tier_sort_selector.emplace(navigator.get_tier_statistics(), last_tier_sort);
+        tier_sort_selector.emplace(navigator.get_tier_statistics(),
+                                   last_tier_sort.first, last_tier_sort.second);
     }
     if (tier_sort_selector) {
         state = SongSelectState::TIER_SORTING;

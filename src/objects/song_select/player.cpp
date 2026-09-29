@@ -290,7 +290,7 @@ std::optional<std::pair<int,int>> SongSelectPlayer::handle_input_diff_sort(DiffS
     return std::nullopt;
 }
 
-std::optional<int> SongSelectPlayer::handle_input_tier_sort(TierSortSelect* tier_sort_selector) {
+std::optional<std::pair<int, std::string>> SongSelectPlayer::handle_input_tier_sort(TierSortSelect* tier_sort_selector) {
     if (is_l_kat_pressed(player_num) || ray::IsKeyPressed(ray::KEY_LEFT)) {
         tier_sort_selector->input_left();
         audio.play_sound("kat", VolumePreset::SOUND);

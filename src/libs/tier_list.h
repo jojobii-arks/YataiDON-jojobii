@@ -46,8 +46,13 @@ public:
     // Lookup by ESE folder name / romaji key (case-insensitive) at a star level.
     TierLookup lookup(const std::string& romaji_or_folder, int level) const;
 
+    // Try candidates in order; first non-empty hit wins (use TITLE keys before folder).
+    TierLookup lookup_first(const std::vector<std::string>& keys, int level) const;
+
     // Per-course tier string for Difficulty::ONI / URA at a star level (others empty).
     std::string tier_for(const std::string& romaji_or_folder, int course, int level) const;
+
+    std::string tier_for_first(const std::vector<std::string>& keys, int course, int level) const;
 
     // Local song count per tier letter at a star level (folder names present in `folder_names`).
     std::unordered_map<std::string, int> count_local(

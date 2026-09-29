@@ -108,7 +108,8 @@ std::optional<Screens> SongSelect2PScreen::update() {
     }
 
     if (navigator.tier_sort_ready() && !tier_sort_selector) {
-        tier_sort_selector.emplace(navigator.get_tier_statistics(), last_tier_sort);
+        tier_sort_selector.emplace(navigator.get_tier_statistics(),
+                                   last_tier_sort.first, last_tier_sort.second);
     }
     if (tier_sort_selector) {
         state = SongSelectState::TIER_SORTING;

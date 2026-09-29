@@ -121,9 +121,35 @@ SongBox::SongBox(const fs::path& path, const BoxDef& box_def, SongParser parser)
     diff_fade_in = (FadeAnimation*)tex.get_animation(12);
 
     {
-        TierLookup tl = tier_list.lookup(tier_list.folder_key_from_path(path));
-        tier_oni = tl.oni;
-        tier_ura = tl.ura;
+        // Tier letters are per star-level. TITLE is source of truth (matches wiki romaji /
+        // keys); folder name is only a fallback for charts whose TITLE doesn't index.
+        std::vector<std::string> keys;
+        auto push_key = [&](const std::string& s) {
+            if (s.empty()) return;
+            for (const auto& k : keys)
+                if (TierListManager::normalize_key(k) == TierListManager::normalize_key(s)) return;
+            keys.push_back(s);
+        };
+        // Prefer en (wiki romaji), then the active-language display title, then any other TITLE*.
+        auto& titles = this->parser.metadata.title;
+        if (auto it = titles.find("en"); it != titles.end()) push_key(it->second);
+        push_key(text_name);
+        if (auto it = titles.find("ja"); it != titles.end()) push_key(it->second);
+        for (const auto& [lang, t] : titles) push_key(t);
+        push_key(tier_list.folder_key_from_path(path));
+
+        const auto& courses = this->parser.metadata.course_data;
+        auto course_level = [&](int course) -> int {
+            auto it = courses.find(course);
+            if (it == courses.end()) return 0;
+            return (int)std::round(it->second.level);
+        };
+        int oni_lv = course_level((int)Difficulty::ONI);
+        int ura_lv = course_level((int)Difficulty::URA);
+        if (oni_lv > 0)
+            tier_oni = tier_list.tier_for_first(keys, (int)Difficulty::ONI, oni_lv);
+        if (ura_lv > 0)
+            tier_ura = tier_list.tier_for_first(keys, (int)Difficulty::URA, ura_lv);
     }
 
     refresh_scores();
