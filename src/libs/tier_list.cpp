@@ -24,6 +24,7 @@ std::string TierListManager::folder_key_from_path(const fs::path& song_path) {
 
 void TierListManager::load(const fs::path& path) {
     loaded_ = false;
+    levels_.clear();
     tiers_.clear();
     entries_.clear();
     by_key_.clear();
@@ -50,6 +51,10 @@ void TierListManager::load(const fs::path& path) {
         return;
     }
 
+    if (doc.HasMember("levels") && doc["levels"].IsArray()) {
+        for (const auto& l : doc["levels"].GetArray())
+            if (l.IsInt()) levels_.push_back(l.GetInt());
+    }
     if (doc.HasMember("tiers") && doc["tiers"].IsArray()) {
         for (const auto& t : doc["tiers"].GetArray()) {
             if (t.IsString()) tiers_.push_back(t.GetString());
@@ -65,7 +70,7 @@ void TierListManager::load(const fs::path& path) {
     auto apply_key = [&](const std::string& raw_key, const TierEntry& entry) {
         std::string key = normalize_key(raw_key);
         if (key.empty()) return;
-        TierLookup& slot = by_key_[key];
+        TierLookup& slot = by_key_[key][entry.level];
         if (entry.difficulty == "ura") {
             slot.ura = entry.tier;
             slot.ura_order = entry.order;
@@ -88,6 +93,8 @@ void TierListManager::load(const fs::path& path) {
             entry.tier = e["tier"].GetString();
         if (e.HasMember("order") && e["order"].IsInt())
             entry.order = e["order"].GetInt();
+        if (e.HasMember("level") && e["level"].IsInt())
+            entry.level = e["level"].GetInt();
         if (entry.tier.empty()) continue;
 
         entries_.push_back(entry);
@@ -112,26 +119,38 @@ void TierListManager::load(const fs::path& path) {
                  entries_.size(), by_key_.size(), path.string());
 }
 
-TierLookup TierListManager::lookup(const std::string& romaji_or_folder) const {
-    auto it = by_key_.find(normalize_key(romaji_or_folder));
-    if (it == by_key_.end()) return {};
-    return it->second;
+std::vector<std::string> TierListManager::tiers_for_level(int level) const {
+    std::vector<std::string> out;
+    for (const auto& entry : entries_) {
+        if (entry.level != level) continue;
+        if (std::find(out.begin(), out.end(), entry.tier) == out.end())
+            out.push_back(entry.tier);
+    }
+    return out;
 }
 
-std::string TierListManager::tier_for(const std::string& romaji_or_folder, int course) const {
-    TierLookup l = lookup(romaji_or_folder);
+TierLookup TierListManager::lookup(const std::string& romaji_or_folder, int level) const {
+    auto it = by_key_.find(normalize_key(romaji_or_folder));
+    if (it == by_key_.end()) return {};
+    auto lit = it->second.find(level);
+    if (lit == it->second.end()) return {};
+    return lit->second;
+}
+
+std::string TierListManager::tier_for(const std::string& romaji_or_folder, int course, int level) const {
+    TierLookup l = lookup(romaji_or_folder, level);
     if (course == 4) return l.ura;
     if (course == 3) return l.oni;
     return {};
 }
 
 std::unordered_map<std::string, int> TierListManager::count_local(
-    const std::vector<std::string>& folder_names) const {
+    const std::vector<std::string>& folder_names, int level) const {
     std::unordered_map<std::string, int> counts;
-    for (const auto& t : tiers_) counts[t] = 0;
+    for (const auto& t : tiers_for_level(level)) counts[t] = 0;
     std::unordered_map<std::string, bool> seen;  // folder|diff to avoid double-count
     for (const auto& folder : folder_names) {
-        TierLookup l = lookup(folder);
+        TierLookup l = lookup(folder, level);
         if (!l.oni.empty()) {
             std::string k = normalize_key(folder) + "|oni";
             if (!seen[k]) { seen[k] = true; counts[l.oni]++; }

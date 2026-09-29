@@ -19,7 +19,11 @@ import time
 import urllib.parse
 import urllib.request
 
-DIFFCHART_URL = "https://taiko.wiki/api/v1/diffchart?type=clear&level=10"
+DIFFCHART_URL = "https://taiko.wiki/api/v1/diffchart?type=clear&level={level}"
+# taiko.wiki only ranks ★6..★10 (levels 1-5 return HTTP 400). Each level has its
+# own tier-letter scale (L6: S/A/C/E/F ... L10: SSS/SS/S+/S/A/B/C/D/E/F/X), so a
+# tier is per (song, difficulty, star-level), not per song.
+LEVELS = [6, 7, 8, 9, 10]
 SONG_BATCH_URL = "https://taiko.wiki/api/v1/song/no"
 USER_AGENT = "YataiDON-tier-fetch/1.0"
 CHUNK = 40
@@ -88,37 +92,40 @@ def main() -> int:
     default_out = os.path.join(here, "..", "data", "tier_data.json")
     out_path = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else default_out)
 
-    print("Fetching diffchart...", flush=True)
-    chart = get_json(DIFFCHART_URL)
-    sections = chart.get("data", {}).get("sections", [])
-    if not sections:
-        print("ERROR: no sections in diffchart response", file=sys.stderr)
-        return 1
-
-    entries_raw: list[tuple[str, str, str, int]] = []
+    entries_raw: list[tuple[str, str, str, int, int]] = []  # (tier, songNo, diff, order, level)
     song_nos: list[str] = []
     seen: set[str] = set()
-    for sec in sections:
-        tier = sec.get("name", "")
-        for i, song in enumerate(sec.get("songs", [])):
-            sn = str(song.get("songNo", ""))
-            diff = song.get("difficulty", "oni") or "oni"
-            order = int(song.get("order", i))
-            entries_raw.append((tier, sn, diff, order))
-            if sn and sn not in seen:
-                seen.add(sn)
-                song_nos.append(sn)
+    all_tiers: list[str] = []
+    for level in LEVELS:
+        print(f"Fetching diffchart level {level}...", flush=True)
+        chart = get_json(DIFFCHART_URL.format(level=level))
+        sections = chart.get("data", {}).get("sections", [])
+        if not sections:
+            print(f"  (level {level}: no sections)", flush=True)
+            continue
+        for sec in sections:
+            tier = sec.get("name", "")
+            if tier and tier not in all_tiers:
+                all_tiers.append(tier)
+            for i, song in enumerate(sec.get("songs", [])):
+                sn = str(song.get("songNo", ""))
+                diff = song.get("difficulty", "oni") or "oni"
+                order = int(song.get("order", i))
+                entries_raw.append((tier, sn, diff, order, level))
+                if sn and sn not in seen:
+                    seen.add(sn)
+                    song_nos.append(sn)
+        time.sleep(0.2)
 
-    print(f"Tiers: {[s.get('name') for s in sections]}")
+    print(f"Tiers: {all_tiers}")
     print(f"Unique songs: {len(song_nos)}, chart entries: {len(entries_raw)}", flush=True)
 
     by_no = fetch_songs(song_nos)
     print(f"Fetched song records: {len(by_no)}/{len(song_nos)}", flush=True)
 
-    tiers = [s.get("name") for s in sections]
     entries = []
     missing = 0
-    for tier, sn, diff, order in entries_raw:
+    for tier, sn, diff, order, level in entries_raw:
         song = by_no.get(sn)
         if not song:
             missing += 1
@@ -135,16 +142,17 @@ def main() -> int:
                 "difficulty": diff,
                 "tier": tier,
                 "order": order,
+                "level": level,
                 "songNo": sn,
             }
         )
 
     payload = {
-        "version": 1,
-        "source": DIFFCHART_URL,
+        "version": 2,
+        "source": "https://taiko.wiki/api/v1/diffchart?type=clear&level={6..10}",
         "type": "clear",
-        "level": 10,
-        "tiers": tiers,
+        "levels": LEVELS,
+        "tiers": all_tiers,
         "entries": entries,
     }
 
