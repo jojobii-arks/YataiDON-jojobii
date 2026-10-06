@@ -722,6 +722,8 @@ void PracticeGameScreen::draw_bar_scrobble(const Note& bar, double current_ms) c
 
 void PracticeGameScreen::draw_drumroll_scrobble(const Note& head, double current_ms) const {
     float start_pos = get_scrobble_position_x(head, current_ms);
+    float hidden_fade = players[0] ? players[0]->hidden_note_fade(start_pos) : 1.0f;
+    if (hidden_fade <= 0.0f) return;
     // Find corresponding TAIL
     const Note* tail = nullptr;
     for (const auto& n : scrobble_note_list) {
@@ -741,15 +743,15 @@ void PracticeGameScreen::draw_drumroll_scrobble(const Note& head, double current
     float y_pos = tex.skin_config[SC::NOTES].y + (184 * tex.screen_scale);
     float moji_y = tex.skin_config[SC::MOJI].y + (184 * tex.screen_scale);
     if (head.display) {
-        tex.draw_texture(t_notes_8, {.color = color, .frame = is_big, .x = start_pos, .y = y_pos, .x2 = length + tex.skin_config[SC::DRUMROLL_WIDTH_OFFSET].width});
-        if (is_big) tex.draw_texture(t_drumroll_big_tail, {.color = color, .x = end_pos, .y = y_pos});
-        else        tex.draw_texture(t_drumroll_tail,     {.color = color, .x = end_pos, .y = y_pos});
+        tex.draw_texture(t_notes_8, {.color = color, .frame = is_big, .x = start_pos, .y = y_pos, .x2 = length + tex.skin_config[SC::DRUMROLL_WIDTH_OFFSET].width, .fade = hidden_fade});
+        if (is_big) tex.draw_texture(t_drumroll_big_tail, {.color = color, .x = end_pos, .y = y_pos, .fade = hidden_fade});
+        else        tex.draw_texture(t_drumroll_tail,     {.color = color, .x = end_pos, .y = y_pos, .fade = hidden_fade});
         TextureObject* head_tex = t_notes[(int)head.type];
-        tex.draw_texture(head_tex, {.color = color, .x = start_pos - t_notes_9->width / 2.0f, .y = y_pos});
+        tex.draw_texture(head_tex, {.color = color, .x = start_pos - t_notes_9->width / 2.0f, .y = y_pos, .fade = hidden_fade});
     }
-    tex.draw_texture(t_moji_drumroll_mid, {.x = start_pos, .y = moji_y, .x2 = length});
-    tex.draw_texture(t_moji, {.frame = head.moji, .x = start_pos - t_moji->width / 2.0f, .y = moji_y});
-    tex.draw_texture(t_moji, {.frame = tail->moji, .x = end_pos  - t_moji->width / 2.0f, .y = moji_y});
+    tex.draw_texture(t_moji_drumroll_mid, {.x = start_pos, .y = moji_y, .x2 = length, .fade = hidden_fade});
+    tex.draw_texture(t_moji, {.frame = head.moji, .x = start_pos - t_moji->width / 2.0f, .y = moji_y, .fade = hidden_fade});
+    tex.draw_texture(t_moji, {.frame = tail->moji, .x = end_pos  - t_moji->width / 2.0f, .y = moji_y, .fade = hidden_fade});
 }
 
 void PracticeGameScreen::draw_balloon_scrobble(const Note& head, double current_ms) const {
@@ -764,16 +766,26 @@ void PracticeGameScreen::draw_balloon_scrobble(const Note& head, double current_
     float pause_pos = JudgePos::X;
     float y_pos = tex.skin_config[SC::NOTES].y + (184 * tex.screen_scale);
     float position;
-    if (current_ms >= tail->hit_ms)   position = end_pos;
-    else if (current_ms >= head.hit_ms) position = pause_pos;
-    else                                position = start_pos;
+    float fade_x;
+    if (current_ms >= tail->hit_ms) {
+        position = end_pos;
+        fade_x = end_pos;
+    } else if (current_ms >= head.hit_ms) {
+        position = pause_pos;
+        fade_x = JudgePos::X;
+    } else {
+        position = start_pos;
+        fade_x = start_pos;
+    }
+    float hidden_fade = players[0] ? players[0]->hidden_note_fade(fade_x) : 1.0f;
+    if (hidden_fade <= 0.0f) return;
     if (head.display) {
         TextureObject* head_tex = t_notes[(int)head.type];
-        tex.draw_texture(head_tex, {.x = position - offset - t_notes_9->width / 2.0f, .y = y_pos});
-        tex.draw_texture(t_notes_10, {.x = position - offset + t_notes_10->width - t_notes_9->width / 2.0f, .y = y_pos});
+        tex.draw_texture(head_tex, {.x = position - offset - t_notes_9->width / 2.0f, .y = y_pos, .fade = hidden_fade});
+        tex.draw_texture(t_notes_10, {.x = position - offset + t_notes_10->width - t_notes_9->width / 2.0f, .y = y_pos, .fade = hidden_fade});
     }
     float moji_y = tex.skin_config[SC::MOJI].y + (184 * tex.screen_scale);
-    tex.draw_texture(t_moji, {.frame = head.moji, .x = position - t_moji->width / 2.0f, .y = moji_y});
+    tex.draw_texture(t_moji, {.frame = head.moji, .x = position - t_moji->width / 2.0f, .y = moji_y, .fade = hidden_fade});
 }
 
 void PracticeGameScreen::draw_notes_scrobble(double current_ms) const {
@@ -796,13 +808,15 @@ void PracticeGameScreen::draw_notes_scrobble(double current_ms) const {
         } else if (note.type == NoteType::BALLOON_HEAD || note.type == NoteType::KUSUDAMA) {
             draw_balloon_scrobble(note, current_ms);
         } else {
+            float x = get_scrobble_position_x(note, current_ms);
+            float hidden_fade = players[0] ? players[0]->hidden_note_fade(x) : 1.0f;
+            if (hidden_fade <= 0.0f) continue;
             if (note.display) {
-                float x = get_scrobble_position_x(note, current_ms);
                 TextureObject* note_tex = t_notes[(int)note.type];
-                tex.draw_texture(note_tex, {.center = true, .x = x - t_notes_9->width / 2.0f, .y = tex.skin_config[SC::NOTES].y + y});
+                tex.draw_texture(note_tex, {.center = true, .x = x - t_notes_9->width / 2.0f, .y = tex.skin_config[SC::NOTES].y + y, .fade = hidden_fade});
             }
-            float moji_x = get_scrobble_position_x(note, current_ms) - t_moji->width / 2.0f;
-            tex.draw_texture(t_moji, {.color = moji_judgment_color(note.index), .frame = note.moji, .x = moji_x, .y = tex.skin_config[SC::MOJI].y + y});
+            float moji_x = x - t_moji->width / 2.0f;
+            tex.draw_texture(t_moji, {.color = moji_judgment_color(note.index), .frame = note.moji, .x = moji_x, .y = tex.skin_config[SC::MOJI].y + y, .fade = hidden_fade});
         }
     }
 

@@ -23,6 +23,7 @@ struct PlayerData {
     bool modifier_auto       = false;
     int modifier_speed       = 10;      // 1.0x, in tenths
     bool modifier_display    = false;
+    int modifier_hidden      = 0;       // 0 = off, else % of approach lane to hide before judge
     bool modifier_inverse    = false;
     int modifier_random      = 0;
     bool modifier_skip       = false;
@@ -117,6 +118,7 @@ inline Modifiers player_data_to_modifiers(const PlayerData& pd) {
     m.auto_play = pd.modifier_auto;
     m.speed     = pd.modifier_speed;
     m.display   = pd.modifier_display;
+    m.hidden    = pd.modifier_hidden;
     m.inverse   = pd.modifier_inverse;
     m.random    = pd.modifier_random;
     m.skip      = pd.modifier_skip;

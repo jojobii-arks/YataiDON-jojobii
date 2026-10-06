@@ -78,7 +78,8 @@ std::optional<Screens> SettingsScreen::handle_input() {
     if (ray::IsKeyPressed(ray::KEY_F1)) {
         return on_screen_end(Screens::INPUT_CALI);
     }
-    if (ray::IsKeyPressed(ray::KEY_F3)) {
+    // F3 is reserved for the Hidden helper overlay (see hidden_helper.h).
+    if (ray::IsKeyPressed(ray::KEY_F4)) {
         return on_screen_end(Screens::INPUT_TEST);
     }
     if (is_l_kat_pressed()) {

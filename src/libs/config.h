@@ -90,6 +90,12 @@ struct VideoConfig {
     bool vsync = true;
 };
 
+// Visual tuning for the Hidden modifier (F3 helper).
+// fade_percent: share of the hide zone used for the soft fade-out (0 = hard cut, 100 = fade across the whole zone).
+struct HiddenConfig {
+    int fade_percent = 25;
+};
+
 struct Config {
     GeneralConfig general;
     NetworkConfig network;
@@ -102,6 +108,7 @@ struct Config {
     AudioConfig audio;
     VolumeConfig volume;
     VideoConfig video;
+    HiddenConfig hidden;
 };
 
 std::string getKeyString(int key_code);

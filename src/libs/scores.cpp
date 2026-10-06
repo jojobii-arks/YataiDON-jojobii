@@ -32,6 +32,7 @@ ScoresManager::ScoresManager(const fs::path& db_path) {
         "modifier_auto BOOL NOT NULL DEFAULT 0,"
         "modifier_speed INTEGER NOT NULL DEFAULT 10,"
         "modifier_display BOOL NOT NULL DEFAULT 0,"
+        "modifier_hidden INTEGER NOT NULL DEFAULT 0,"
         "modifier_inverse BOOL NOT NULL DEFAULT 0,"
         "modifier_random INTEGER NOT NULL DEFAULT 0,"
         "neiro_index INTEGER NOT NULL DEFAULT 0,"
@@ -139,6 +140,7 @@ ScoresManager::ScoresManager(const fs::path& db_path) {
     else spdlog::error("ScoresManager: one or more migrations failed, not raising user_version");
 
     run_migration("ALTER TABLE players ADD COLUMN modifier_skip BOOL NOT NULL DEFAULT 0;");
+    run_migration("ALTER TABLE players ADD COLUMN modifier_hidden INTEGER NOT NULL DEFAULT 0;");
 
     sqlite3_exec(db_fsd,
         "INSERT OR IGNORE INTO players (player_id, username, title) VALUES (1, 'Don-chan', 'Donder Debut!');",
@@ -619,7 +621,7 @@ std::optional<PlayerData> ScoresManager::get_player_data(int player_id) {
         " modifier_auto, modifier_speed, modifier_display, modifier_inverse, modifier_random,"
         " neiro_index, chara_color_1, chara_color_2, chara_color_3,"
         " chara_head_index, chara_body_index, chara_cos_index, chara_is_costume,"
-        " chara_paint_index, chara_face_index, chara_acce_index, modifier_skip"
+        " chara_paint_index, chara_face_index, chara_acce_index, modifier_skip, modifier_hidden"
         " FROM players WHERE player_id = ?;";
 
     if (sqlite3_prepare_v2(db_fsd, query, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -689,6 +691,7 @@ std::optional<PlayerData> ScoresManager::get_player_data(int player_id) {
     p.chara_face_index  = sqlite3_column_int(stmt, 21);
     p.chara_acce_index  = sqlite3_column_int(stmt, 22);
     p.modifier_skip     = sqlite3_column_int(stmt, 23);
+    p.modifier_hidden   = sqlite3_column_int(stmt, 24);
 
     sqlite3_finalize(stmt);
     return p;
@@ -702,7 +705,7 @@ void ScoresManager::save_player_data(const PlayerData& player) {
         " modifier_auto = ?, modifier_speed = ?, modifier_display = ?, modifier_inverse = ?, modifier_random = ?,"
         " neiro_index = ?, chara_color_1 = ?, chara_color_2 = ?, chara_color_3 = ?,"
         " chara_head_index = ?, chara_body_index = ?, chara_cos_index = ?, chara_is_costume = ?,"
-        " chara_paint_index = ?, chara_face_index = ?, chara_acce_index = ?, modifier_skip = ?"
+        " chara_paint_index = ?, chara_face_index = ?, chara_acce_index = ?, modifier_skip = ?, modifier_hidden = ?"
         " WHERE player_id = ?;";
 
     if (sqlite3_prepare_v2(db_fsd, query, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -737,7 +740,8 @@ void ScoresManager::save_player_data(const PlayerData& player) {
     sqlite3_bind_int (stmt, 21, player.chara_face_index);
     sqlite3_bind_int (stmt, 22, player.chara_acce_index);
     sqlite3_bind_int (stmt, 23, player.modifier_skip);
-    sqlite3_bind_int (stmt, 24, player.player_id);
+    sqlite3_bind_int (stmt, 24, player.modifier_hidden);
+    sqlite3_bind_int (stmt, 25, player.player_id);
 
     if (sqlite3_step(stmt) != SQLITE_DONE)
         spdlog::error("save_player: failed to update player {}: {}", player.player_id, sqlite3_errmsg(db_fsd));

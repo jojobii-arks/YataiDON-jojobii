@@ -273,6 +273,9 @@ Config get_config() {
     config.general.player_2_id = config_file["general"]["player_2_id"].value_or(1);
     config.general.touch_input = config_file["general"]["touch_input"].value_or(false);
 
+    config.hidden.fade_percent = std::clamp(
+        config_file["hidden"]["fade_percent"].value_or(25), 0, 100);
+
     config.network.access_code = config_file["network"]["access_code"].value_or(
         config_file["general"]["access_code"].value_or(""));
     config.network.online_play = config_file["network"]["online_play"].value_or(
@@ -437,6 +440,10 @@ void save_config(const Config& config) {
         {"access_code", config.network.access_code},
         {"online_play", config.network.online_play},
         {"sync_scores", config.network.sync_scores}
+    });
+
+    config_table.insert("hidden", toml::table{
+        {"fade_percent", config.hidden.fade_percent}
     });
 
     // Paths

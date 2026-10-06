@@ -18,6 +18,8 @@ struct Modifiers {
     bool auto_play = false;
     int speed = 10;
     bool display = false;
+    // Hidden: 0 = off, else % of approach lane from the judge where notes vanish.
+    int hidden = 0;
     bool inverse = false;
     int random = 0;
     int subdiff = 0;

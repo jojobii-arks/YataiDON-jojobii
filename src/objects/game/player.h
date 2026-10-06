@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <unordered_map>
 #include "../../libs/screen.h"
 #include "../../libs/song_parser.h"
@@ -88,6 +89,9 @@ public:
     void cut_to_end(double now, int prev_good = 0, int prev_ok = 0, int prev_bad = 0);
     bool was_skipped() const { return skipped_run; }
     const Modifiers& get_modifiers() const { return modifiers; }
+    // 1 = fully visible, 0 = fully hidden by the Hidden mod (based on distance to judge).
+    float hidden_note_fade(float note_x) const;
+    void set_hidden(int value) { modifiers.hidden = std::clamp(value, 0, 100); }
     void set_auto_play(bool value) { modifiers.auto_play = value; }
     void reset_performance() {
         good_count = ok_count = bad_count = 0;

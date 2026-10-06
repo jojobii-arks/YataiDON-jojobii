@@ -14,7 +14,7 @@
 class ModifierSelector {
 private:
     static const std::map<std::string, std::string> TEX_MAP;
-    static const std::array<std::string, 5> BASE_MOD_NAMES;
+    static const std::array<std::string, 6> BASE_MOD_NAMES;
 
     std::vector<std::string> mod_names;
 
@@ -33,12 +33,14 @@ private:
     std::unique_ptr<OutlinedText> text_true;
     std::unique_ptr<OutlinedText> text_false;
     std::unique_ptr<OutlinedText> text_speed;
+    std::unique_ptr<OutlinedText> text_hidden;
     std::unique_ptr<OutlinedText> text_kimagure;
     std::unique_ptr<OutlinedText> text_detarame;
 
     std::unique_ptr<OutlinedText> text_true_2;
     std::unique_ptr<OutlinedText> text_false_2;
     std::unique_ptr<OutlinedText> text_speed_2;
+    std::unique_ptr<OutlinedText> text_hidden_2;
     std::unique_ptr<OutlinedText> text_kimagure_2;
     std::unique_ptr<OutlinedText> text_detarame_2;
 

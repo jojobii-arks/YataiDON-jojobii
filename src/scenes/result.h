@@ -22,8 +22,8 @@ protected:
     double skipped_time = 0;
     static constexpr double kFrameMs        = 1000.0 / 120.0;
     static constexpr double kEnableSkipMs   =  100 * kFrameMs;
-    static constexpr double kWaitEffectEndMs =  500 * kFrameMs;
-    static constexpr double kWaitNextSceneMs =  500 * kFrameMs;
+    static constexpr double kWaitEffectEndMs =  0;
+    static constexpr double kWaitNextSceneMs =  0;
     static constexpr double kAutoNextSceneMs = 3600 * kFrameMs;
     double skip_enabled_ms = 0;
     std::optional<ResultPlayer> player_1;

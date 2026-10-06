@@ -85,7 +85,7 @@ Later: second card for “session delta” (counts since app open).
 
 ## Config
 
-App config (e.g. `%APPDATA%/yataidon-progress/config.json`):
+App config (e.g. `%APPDATA%/taiko-stats/config.json`):
 
 ```json
 {
@@ -113,16 +113,23 @@ Auto-detect: look beside `YataiDON.exe` / read game `config.toml` `[paths]` if p
 5. **Watch** — auto-refresh; polish errors when game locks DB
 6. **Optional** — session deltas, always-on-top, opacity, tray icon
 
-## Repo layout (suggestion)
+## Repo layout
 
-Separate repo or `tools/progress-companion/` in the fork :
+Implemented at `progress-companion/` as **taiko-stats**:
 
 ```
-progress-companion/
-  src-tauri/     # Rust
-  src/           # UI
+progress-companion/   # app id: taiko-stats
+  server/             # Node (Hono) — scores.db, TJA catalog, tier, watch
+  src/                # React UI (Summary + feature registry)
+  electron/           # thin Electron shell
+  shared/             # Shared types
+  themes/             # Cursor (+ Ink) design tokens
+  launch.bat
   README.md
 ```
+
+Handoff originally suggested Tauri 2; v1 ships Electron + Node+Vite.
+API shapes match the plan so a Tauri shell can still wrap later.
 
 
 

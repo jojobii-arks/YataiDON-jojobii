@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <rlgl.h>
 
@@ -44,6 +45,7 @@
 
 #include "objects/global/debug_menu.h"
 #include "objects/global/fps_counter.h"
+#include "objects/global/hidden_helper.h"
 
 void draw_outer_border(int screen_width, int screen_height, ray::Color last_color) {
     DrawRectangle(-screen_width, 0, screen_width, screen_height, last_color);
@@ -265,6 +267,20 @@ static void run_frame() {
     L.camera = compute_camera2d(tex.screen_width, tex.screen_height);
     debug_menu.update(L.camera);
 
+    {
+        const ray::Vector2 mouse_world = ray::GetScreenToWorld2D(ray::GetMousePosition(), L.camera);
+        // Live-apply hide distance to whatever GameScreen (incl. practice/dan/2p) is active.
+        auto* game = dynamic_cast<GameScreen*>(
+            L.screens.count(L.current_screen) ? L.screens[L.current_screen].get() : nullptr);
+        hidden_helper.apply_live_distance = game
+            ? std::function<void(int)>([game](int d) {
+                  for (auto& p : game->players)
+                      if (p) p->set_hidden(d);
+              })
+            : nullptr;
+        hidden_helper.update(mouse_world);
+    }
+
     ray::BeginDrawing();
 
     if (global_data.camera.border_color != L.last_color) {
@@ -340,6 +356,7 @@ static void run_frame() {
     }
 
     debug_menu.draw();
+    hidden_helper.draw();
 
     draw_outer_border(tex.screen_width, tex.screen_height, L.last_color);
 

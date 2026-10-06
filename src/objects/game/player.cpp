@@ -120,10 +120,11 @@ void Player::init_player_textures() {
         return std::nullopt;
     };
 
-    // Cabinet order: speed, doron, abekobe, random.
+    // Cabinet order: speed, doron/hidden, abekobe, random.
     t_badges.clear();
     if (auto sb = speed_badge()) t_badges.push_back(*sb);
-    if (modifiers.display && tex.has_texture("lane/mod_doron")) t_badges.push_back(tex.get_texture("lane/mod_doron"));
+    if ((modifiers.display || modifiers.hidden > 0) && tex.has_texture("lane/mod_doron"))
+        t_badges.push_back(tex.get_texture("lane/mod_doron"));
     if (modifiers.inverse && tex.has_texture("lane/mod_abekobe")) t_badges.push_back(tex.get_texture("lane/mod_abekobe"));
     if (modifiers.random == 2 && tex.has_texture("lane/mod_detarame")) t_badges.push_back(tex.get_texture("lane/mod_detarame"));
     else if (modifiers.random == 1 && tex.has_texture("lane/mod_kimagure")) t_badges.push_back(tex.get_texture("lane/mod_kimagure"));
@@ -828,6 +829,27 @@ float Player::get_position_y(const Note& note, double current_ms) {
     return (note.hit_ms - current_ms) * speedy;
 }
 
+float Player::hidden_note_fade(float note_x) const {
+    if (modifiers.hidden <= 0) return 1.0f;
+    float travel = tex.screen_width - JudgePos::X;
+    if (travel <= 0.0f) return 1.0f;
+    float hide_dist = (modifiers.hidden / 100.0f) * travel;
+    float dist = std::abs(note_x - JudgePos::X);
+    if (dist >= hide_dist) return 1.0f;
+
+    // fade_percent: 0 = hard cut at hide_dist, 100 = soft fade across the whole hide zone.
+    int fade_pct = 25;
+    if (global_data.config)
+        fade_pct = std::clamp(global_data.config->hidden.fade_percent, 0, 100);
+    if (fade_pct <= 0) return 0.0f;
+
+    float fade_zone = hide_dist * (fade_pct / 100.0f);
+    if (fade_zone < 1.0f) return 0.0f;
+    float fade_end = hide_dist - fade_zone;
+    if (dist <= fade_end) return 0.0f;
+    return (dist - fade_end) / fade_zone;
+}
+
 void Player::handle_scroll_type_commands(double ms_from_start, const TimelineObject& timeline_object, int buffer_index) {
     if (timeline_object.start_time > ms_from_start) return;
     if (timeline_object.bpmchange.has_value()) {
@@ -1525,6 +1547,8 @@ void Player::draw_drumroll(double current_ms, float y, const Note& head, int cur
         }
     }
     float start_position = get_position_x(head, current_ms);
+    float hidden_fade = hidden_note_fade(start_position);
+    if (hidden_fade <= 0.0f) return;
     auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
                                head.index + 1, [](const Note& n, int idx) { return n.index < idx; });
     while (it != draw_note_buffer.end() && it->type != NoteType::TAIL) ++it;
@@ -1540,20 +1564,20 @@ void Player::draw_drumroll(double current_ms, float y, const Note& head, int cur
     end_position += judge_x;
     float moji_y = y + tex.skin_config[SC::MOJI].y;
     if (moji_pass) {
-        tex.draw_texture(t_moji_drumroll_mid, {.x=start_position, .y=moji_y+judge_y, .x2=length});
-        tex.draw_texture(t_moji, {.frame=head.moji, .x=start_position - (t_moji->width/2.0f), .y=moji_y+judge_y});
-        tex.draw_texture(t_moji, {.frame=tail.moji, .x=end_position - (t_moji->width/2.0f), .y=moji_y+judge_y});
+        tex.draw_texture(t_moji_drumroll_mid, {.x=start_position, .y=moji_y+judge_y, .x2=length, .fade=hidden_fade});
+        tex.draw_texture(t_moji, {.frame=head.moji, .x=start_position - (t_moji->width/2.0f), .y=moji_y+judge_y, .fade=hidden_fade});
+        tex.draw_texture(t_moji, {.frame=tail.moji, .x=end_position - (t_moji->width/2.0f), .y=moji_y+judge_y, .fade=hidden_fade});
         return;
     }
 
     if (head.display) {
-        tex.draw_texture(t_notes_8, {.color=color, .frame=is_big, .x=start_position, .y=y_pos, .x2=length+tex.skin_config[SC::DRUMROLL_WIDTH_OFFSET].width});
+        tex.draw_texture(t_notes_8, {.color=color, .frame=is_big, .x=start_position, .y=y_pos, .x2=length+tex.skin_config[SC::DRUMROLL_WIDTH_OFFSET].width, .fade=hidden_fade});
         if (is_big) {
-            tex.draw_texture(t_drumroll_big_tail, {.color=color, .x=end_position, .y=y_pos});
+            tex.draw_texture(t_drumroll_big_tail, {.color=color, .x=end_position, .y=y_pos, .fade=hidden_fade});
         } else {
-            tex.draw_texture(t_drumroll_tail, {.color=color, .x=end_position, .y=y_pos});
+            tex.draw_texture(t_drumroll_tail, {.color=color, .x=end_position, .y=y_pos, .fade=hidden_fade});
         }
-        tex.draw_texture(note_tex_ids[(int)head.type], {.color=color, .frame=current_eighth % 2, .x=start_position - t_notes_9->width/2.0f, .y=y_pos+judge_y});
+        tex.draw_texture(note_tex_ids[(int)head.type], {.color=color, .frame=current_eighth % 2, .x=start_position - t_notes_9->width/2.0f, .y=y_pos+judge_y, .fade=hidden_fade});
     }
 }
 
@@ -1581,20 +1605,26 @@ void Player::draw_balloon(double current_ms, float y, const Note& head, int curr
     start_position += judge_x;
     end_position += judge_x;
     float position;
+    float fade_x;
     if (current_ms >= tail.hit_ms) {
         position = end_position;
+        fade_x = get_position_x(tail, current_ms);
     } else if (current_ms >= head.hit_ms) {
         position = pause_position;
+        fade_x = JudgePos::X;
     } else {
         position = start_position;
+        fade_x = get_position_x(head, current_ms);
     }
+    float hidden_fade = hidden_note_fade(fade_x);
+    if (hidden_fade <= 0.0f) return;
     if (moji_pass) {
-        tex.draw_texture(t_moji, {.frame=head.moji, .x=position - (t_moji->width/2.0f), .y=moji_y});
+        tex.draw_texture(t_moji, {.frame=head.moji, .x=position - (t_moji->width/2.0f), .y=moji_y, .fade=hidden_fade});
         return;
     }
     if (head.display) {
-        tex.draw_texture(note_tex_ids[(int)head.type], {.frame=current_eighth % 2, .x=position-offset - t_notes_9->width/2.0f, .y=y_pos});
-        tex.draw_texture(t_notes_10, {.frame=current_eighth % 2, .x=position-offset+t_notes_10->width - t_notes_9->width/2.0f, .y=y_pos});
+        tex.draw_texture(note_tex_ids[(int)head.type], {.frame=current_eighth % 2, .x=position-offset - t_notes_9->width/2.0f, .y=y_pos, .fade=hidden_fade});
+        tex.draw_texture(t_notes_10, {.frame=current_eighth % 2, .x=position-offset+t_notes_10->width - t_notes_9->width/2.0f, .y=y_pos, .fade=hidden_fade});
     }
 }
 
@@ -1653,7 +1683,10 @@ void Player::draw_notes(double current_ms, float y) {
         } else if (note.type == NoteType::BALLOON_HEAD) {
             draw_balloon(current_ms, y, note, current_eighth, false);
         } else if (note.display) {
-            tex.draw_texture(note_tex_ids[(int)note.type], {.frame=current_eighth % 2, .center=true, .x=pos->first - (t_notes_9->width/2.0f), .y=pos->second+tex.skin_config[SC::NOTES].y});
+            float note_x = pos->first - judge_x;
+            float hidden_fade = hidden_note_fade(note_x);
+            if (hidden_fade <= 0.0f) continue;
+            tex.draw_texture(note_tex_ids[(int)note.type], {.frame=current_eighth % 2, .center=true, .x=pos->first - (t_notes_9->width/2.0f), .y=pos->second+tex.skin_config[SC::NOTES].y, .fade=hidden_fade});
         }
     }
 
@@ -1668,7 +1701,10 @@ void Player::draw_notes(double current_ms, float y) {
         } else if (note.type == NoteType::BALLOON_HEAD) {
             draw_balloon(current_ms, y, note, current_eighth, true);
         } else {
-            tex.draw_texture(t_moji, {.frame=note.moji, .x=pos->first - (t_moji->width/2.0f), .y=tex.skin_config[SC::MOJI].y + pos->second});
+            float note_x = pos->first - judge_x;
+            float hidden_fade = hidden_note_fade(note_x);
+            if (hidden_fade <= 0.0f) continue;
+            tex.draw_texture(t_moji, {.frame=note.moji, .x=pos->first - (t_moji->width/2.0f), .y=tex.skin_config[SC::MOJI].y + pos->second, .fade=hidden_fade});
         }
     }
 }

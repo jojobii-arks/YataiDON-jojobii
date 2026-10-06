@@ -1,0 +1,49 @@
+/* Optional dark theme — swap via data-theme="ink" */
+[data-theme="ink"] {
+  --color-primary: #ff6a2b;
+  --color-primary-active: #e85a1c;
+  --color-ink: #f3f1ea;
+  --color-body: #c4c0b6;
+  --color-body-strong: #f3f1ea;
+  --color-muted: #8e8a80;
+  --color-muted-soft: #6a675f;
+  --color-hairline: #2e2c28;
+  --color-hairline-soft: #252320;
+  --color-hairline-strong: #3f3c36;
+  --color-canvas: #161512;
+  --color-canvas-soft: #1c1a17;
+  --color-surface-card: #1f1d19;
+  --color-surface-strong: #2a2823;
+  --color-on-primary: #ffffff;
+  --color-semantic-success: #3dbf8c;
+  --color-semantic-error: #ef4d6d;
+
+  --rank-white: #3a3833;
+  --rank-bronze: #c08a5a;
+  --rank-silver: #9aa3ad;
+  --rank-gold: #e0b13a;
+  --rank-pink: #e88ab0;
+  --rank-purple: #8b6cc9;
+  --rank-rainbow: linear-gradient(135deg, #ff6b6b, #f7d060, #7bed9f, #70a1ff, #c56cf0);
+
+  --crown-clear: #8e9aab;
+  --crown-fc: #d4a017;
+  --crown-dfc: #ef4d6d;
+
+  --course-easy: #3d9e6f;
+  --course-normal: #c9a227;
+  --course-hard: #d64545;
+  --course-oni: #7b8aef;
+  --course-ura: #e07ab5;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+
+  --font-sans: "Inter", system-ui, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}

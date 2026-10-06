@@ -5,12 +5,19 @@ const std::map<std::string, std::string> ModifierSelector::TEX_MAP = {
     {"auto",    "mod_auto"},
     {"speed",   "mod_baisaku"},
     {"display", "mod_doron"},
+    {"hidden",  "mod_doron"},
     {"inverse", "mod_abekobe"},
     {"random",  "mod_kimagure"}
 };
-const std::array<std::string, 5> ModifierSelector::BASE_MOD_NAMES = {
-    "auto", "speed", "display", "inverse", "random"
+const std::array<std::string, 6> ModifierSelector::BASE_MOD_NAMES = {
+    "auto", "speed", "display", "hidden", "inverse", "random"
 };
+
+static std::string hidden_value_str(int hidden, const std::string& language) {
+    if (hidden <= 0)
+        return tex.skin_config[SC::MODIFIER_TEXT_FALSE].text.at(language);
+    return std::format("{}%", hidden);
+}
 
 bool ModifierSelector::get_bool(int mod_index) {
     const std::string& n = mod_names[mod_index];
@@ -72,27 +79,25 @@ ModifierSelector::ModifierSelector(PlayerNum player_num, PlayerData* player) : p
     for (const auto& [name, icon] : TEX_MAP)
         t_mod_icons[icon] = tex.get_texture("modifier/" + icon);
 
-    static const std::array<SC, 5> MOD_NAME_KEYS = {
-        SC::MODIFIER_NAME_AUTO, SC::MODIFIER_NAME_SPEED, SC::MODIFIER_NAME_DISPLAY,
-        SC::MODIFIER_NAME_INVERSE, SC::MODIFIER_NAME_RANDOM
-    };
-    for (const auto& key : MOD_NAME_KEYS)
-        text_name.push_back(make_text(tex.skin_config[key].text.at(language)));
+    for (const auto& name : BASE_MOD_NAMES)
+        text_name.push_back(make_text(row_label(name)));
 
     if (has_row("skip"))
-        text_name.push_back(make_text(tex.skin_config[SC::MODIFIER_NAME_SKIP].text.at(language)));
+        text_name.push_back(make_text(row_label("skip")));
     if (has_neiro_row())
-        text_name.push_back(make_text(tex.skin_config[SC::MODIFIER_NAME_NEIRO].text.at(language)));
+        text_name.push_back(make_text(row_label("neiro")));
 
     text_true      = make_text(tex.skin_config[SC::MODIFIER_TEXT_TRUE].text.at(language));
     text_false     = make_text(tex.skin_config[SC::MODIFIER_TEXT_FALSE].text.at(language));
     text_speed     = make_text(std::format("{:.1f}", player->modifier_speed / 10.0f));
+    text_hidden    = make_text(hidden_value_str(player->modifier_hidden, language));
     text_kimagure  = make_text(tex.skin_config[SC::MODIFIER_TEXT_KIMAGURE].text.at(language));
     text_detarame  = make_text(tex.skin_config[SC::MODIFIER_TEXT_DETARAME].text.at(language));
 
     text_true_2     = make_text(tex.skin_config[SC::MODIFIER_TEXT_TRUE].text.at(language));
     text_false_2    = make_text(tex.skin_config[SC::MODIFIER_TEXT_FALSE].text.at(language));
     text_speed_2    = make_text(std::format("{:.1f}", player->modifier_speed / 10.0f));
+    text_hidden_2   = make_text(hidden_value_str(player->modifier_hidden, language));
     text_kimagure_2 = make_text(tex.skin_config[SC::MODIFIER_TEXT_KIMAGURE].text.at(language));
     text_detarame_2 = make_text(tex.skin_config[SC::MODIFIER_TEXT_DETARAME].text.at(language));
 
@@ -173,6 +178,9 @@ void ModifierSelector::start_text_animation(int dir) {
     if (mod_name == "speed") {
         text_speed_2 = std::move(text_speed);
         text_speed = make_text(std::format("{:.1f}", player->modifier_speed / 10.0f));
+    } else if (mod_name == "hidden") {
+        text_hidden_2 = std::move(text_hidden);
+        text_hidden = make_text(hidden_value_str(player->modifier_hidden, language));
     } else if (mod_name == "neiro") {
         text_neiro_2 = std::move(text_neiro);
         text_neiro = make_text(neiro_names[neiro_index]);
@@ -209,6 +217,29 @@ static int speed_step(int value, int dir) {
     return 30;
 }
 
+// 0 (off), then 10..60% in 5% steps — how far from the judge notes vanish.
+static int hidden_step(int value, int dir) {
+    static const int steps[] = {0, 10, 15, 20, 25, 30, 35, 40, 50, 60};
+    constexpr int n = (int)(sizeof(steps) / sizeof(steps[0]));
+    int idx = 0;
+    for (int i = 0; i < n; i++) {
+        if (steps[i] >= value) { idx = i; break; }
+        idx = i;
+    }
+    if (steps[idx] != value) {
+        // Snap unknown saved values onto the nearest listed step before moving.
+        int best = 0;
+        int best_d = std::abs(steps[0] - value);
+        for (int i = 1; i < n; i++) {
+            int d = std::abs(steps[i] - value);
+            if (d < best_d) { best = i; best_d = d; }
+        }
+        idx = best;
+    }
+    idx = (idx + dir + n) % n;
+    return steps[idx];
+}
+
 void ModifierSelector::left() {
     if (is_confirmed) return;
     const std::string& mod_name = mod_names[current_mod_index];
@@ -216,6 +247,9 @@ void ModifierSelector::left() {
 
     if (mod_name == "speed") {
         player->modifier_speed = speed_step(player->modifier_speed, -1);
+        start_text_animation(1);
+    } else if (mod_name == "hidden") {
+        player->modifier_hidden = hidden_step(player->modifier_hidden, -1);
         start_text_animation(1);
     } else if (mod_name == "neiro") {
         step_neiro(-1);
@@ -236,6 +270,9 @@ void ModifierSelector::right() {
 
     if (mod_name == "speed") {
         player->modifier_speed = speed_step(player->modifier_speed, +1);
+        start_text_animation(-1);
+    } else if (mod_name == "hidden") {
+        player->modifier_hidden = hidden_step(player->modifier_hidden, +1);
         start_text_animation(-1);
     } else if (mod_name == "neiro") {
         step_neiro(1);
@@ -301,6 +338,12 @@ void ModifierSelector::draw() {
             else if (spd >= 30) tex.draw_texture(t_mod_sanbai, {.x=x, .y=row_y});
             else if (spd >  10) tex.draw_texture(t_mod_icons.at(TEX_MAP.at(mod_name)), {.x=x, .y=row_y});
 
+        } else if (mod_name == "hidden") {
+            float tx = text_base_x - (text_hidden->width / 2.0f);
+            draw_animated_text(text_hidden, text_hidden_2, tx + x, text_y, is_current);
+            if (player->modifier_hidden > 0)
+                tex.draw_texture(t_mod_icons.at(TEX_MAP.at(mod_name)), {.x=x, .y=row_y});
+
         } else if (mod_name == "neiro") {
             float tx = text_base_x - (text_neiro->width / 2.0f);
             draw_animated_text(text_neiro, text_neiro_2, tx + x, text_y, is_current);
@@ -342,6 +385,7 @@ std::string ModifierSelector::row_label(const std::string& n) const {
     if (n == "auto")    return tex.skin_config[SC::MODIFIER_NAME_AUTO].text.at(language);
     if (n == "speed")   return tex.skin_config[SC::MODIFIER_NAME_SPEED].text.at(language);
     if (n == "display") return tex.skin_config[SC::MODIFIER_NAME_DISPLAY].text.at(language);
+    if (n == "hidden")  return tex.skin_text("modifier_name_hidden", language, "Hidden");
     if (n == "inverse") return tex.skin_config[SC::MODIFIER_NAME_INVERSE].text.at(language);
     if (n == "random")  return tex.skin_config[SC::MODIFIER_NAME_RANDOM].text.at(language);
     if (n == "skip")    return tex.skin_config[SC::MODIFIER_NAME_SKIP].text.at(language);
@@ -366,6 +410,10 @@ std::vector<ModifierSelector::ModRow> ModifierSelector::lua_rows() {
             r.value   = std::format("{:.1f}", player->modifier_speed / 10.0f);
             r.state   = player->modifier_speed;
             r.changed = player->modifier_speed != 10;
+        } else if (n == "hidden") {
+            r.value   = hidden_value_str(player->modifier_hidden, language);
+            r.state   = player->modifier_hidden;
+            r.changed = player->modifier_hidden > 0;
         } else if (n == "neiro") {
             r.value   = neiro_names.empty() ? std::string() : neiro_names[neiro_index];
             r.state   = neiro_index;

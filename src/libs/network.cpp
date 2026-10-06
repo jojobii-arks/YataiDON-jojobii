@@ -41,6 +41,7 @@ std::string modifiers_to_json(const Modifiers& m) {
     doc.AddMember("auto_play", m.auto_play, allocator);
     doc.AddMember("speed", m.speed, allocator);
     doc.AddMember("display", m.display, allocator);
+    doc.AddMember("hidden", m.hidden, allocator);
     doc.AddMember("inverse", m.inverse, allocator);
     doc.AddMember("random", m.random, allocator);
     doc.AddMember("subdiff", m.subdiff, allocator);
