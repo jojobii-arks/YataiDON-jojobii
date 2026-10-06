@@ -9,7 +9,7 @@ private:
     bool is_2p;
     FadeAnimation* bachio_fade_in;
     TextureChangeAnimation* bachio_texture_change;
-    MoveAnimation* bachio_fall;
+    TextureChangeAnimation* bachio_fall;
     MoveAnimation* bachio_move_out;
     FadeAnimation* bachio_boom_fade_in;
     TextureResizeAnimation* bachio_boom_scale;

@@ -7,7 +7,7 @@ FailAnimation::FailAnimation(bool is_2p)
 
     bachio_fade_in = dynamic_cast<FadeAnimation*>(tex.get_animation(46, true));
     bachio_texture_change = dynamic_cast<TextureChangeAnimation*>(tex.get_animation(47, true));
-    bachio_fall = dynamic_cast<MoveAnimation*>(tex.get_animation(48, true));
+    bachio_fall = dynamic_cast<TextureChangeAnimation*>(tex.get_animation(48, true));
     bachio_move_out = dynamic_cast<MoveAnimation*>(tex.get_animation(49));
     bachio_boom_fade_in = dynamic_cast<FadeAnimation*>(tex.get_animation(50));
     bachio_boom_scale = dynamic_cast<TextureResizeAnimation*>(tex.get_animation(51));
