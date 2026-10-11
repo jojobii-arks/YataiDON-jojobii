@@ -233,8 +233,6 @@ void Player::reload_chart(std::optional<SongParser>& new_parser, int new_difficu
     ending_anim.reset();
     branch_indicator.reset();
     current_lyric.reset();
-    delay_start.reset();
-    delay_end.reset();
     is_drumroll = false;
     is_balloon = false;
     is_gogo_time = false;
