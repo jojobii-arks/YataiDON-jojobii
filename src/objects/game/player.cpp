@@ -190,6 +190,60 @@ void Player::reload_for_dan(std::optional<SongParser>& new_parser, int new_diffi
     skipped_run = false;
 }
 
+void Player::reload_chart(std::optional<SongParser>& new_parser, int new_difficulty) {
+    parser = new_parser;
+    difficulty = new_difficulty;
+    draw_judge_list.clear();
+    draw_drum_hit_list.clear();
+    draw_arc_list.clear();
+    gauge_hit_effect.clear();
+    base_score_list.clear();
+    lane_hit_effect.reset();
+    gogo_time.reset();
+    fireworks.reset();
+    drumroll_counter.reset();
+    balloon_counter.reset();
+    kusudama_counter.reset();
+    combo_announce.reset();
+    ending_anim.reset();
+    branch_indicator.reset();
+    current_lyric.reset();
+    delay_start.reset();
+    delay_end.reset();
+    is_drumroll = false;
+    is_balloon = false;
+    is_gogo_time = false;
+    curr_drumroll_count = 0;
+    curr_balloon_count = 0;
+    kusudama_shared_hits = 0;
+    branch_history.clear();
+    skipped_run = false;
+    resume_filter_ms = -1e18;
+    reset_chart();
+    reset_performance();
+}
+
+void Player::adopt_parser(std::optional<SongParser>& new_parser) {
+    parser = new_parser;
+}
+
+void Player::append_notes(const NoteList& extra) {
+    for (const Note& src : extra.notes) {
+        Note note = src;
+        get_load_time(note);
+        if (note.type == NoteType::DON || note.type == NoteType::DON_L)
+            don_notes.push_back(note);
+        else if (note.type == NoteType::KAT || note.type == NoteType::KAT_L)
+            kat_notes.push_back(note);
+        else if (note.type != NoteType::BARLINE)
+            other_notes.push_back(note);
+        draw_note_list.push_back(note);
+        if (note.hit_ms > end_time) end_time = note.hit_ms;
+    }
+    std::sort(draw_note_list.begin(), draw_note_list.end(),
+              [](const Note& a, const Note& b) { return a.load_ms < b.load_ms; });
+}
+
 void Player::handle_timeline(double ms_from_start) {
     if (timeline.empty()) return;
     TimelineObject timeline_object = timeline.front();
@@ -236,7 +290,7 @@ void Player::autoplay_manager(double ms_from_start, double current_ms, std::opti
             autoplay_hit_side = autoplay_hit_side == Side::LEFT ? Side::RIGHT : Side::LEFT;
             spawn_hit_effects(hit_type, autoplay_hit_side);
             audio.play_sound(don_hitsound, VolumePreset::HITSOUND);
-            check_note(ms_from_start, hit_type, current_ms, background);
+            check_note(ms_from_start, hit_type, current_ms, background, autoplay_hit_side);
         }
     } else {
         auto autoplay_hit = [&](DrumType type, bool big) {
@@ -258,7 +312,7 @@ void Player::autoplay_manager(double ms_from_start, double current_ms, std::opti
             hit_type = DrumType::DON;
             autoplay_hit(hit_type, don_notes.front().type == NoteType::DON_L);
             audio.play_sound(don_hitsound, VolumePreset::HITSOUND);
-            check_note(ms_from_start, hit_type, current_ms, background);
+            check_note(ms_from_start, hit_type, current_ms, background, autoplay_hit_side);
             last_note_hit = current_ms;
             if (don_notes.size() == remaining) break;
         }
@@ -269,7 +323,7 @@ void Player::autoplay_manager(double ms_from_start, double current_ms, std::opti
             hit_type = DrumType::KAT;
             autoplay_hit(hit_type, kat_notes.front().type == NoteType::KAT_L);
             audio.play_sound(kat_hitsound, VolumePreset::HITSOUND);
-            check_note(ms_from_start, hit_type, current_ms, background);
+            check_note(ms_from_start, hit_type, current_ms, background, autoplay_hit_side);
             if (kat_notes.size() == remaining) break;
         }
     }
@@ -1021,12 +1075,13 @@ void Player::handle_lyric(double ms_from_start, const TimelineObject& timeline_o
 }
 
 void Player::play_note_manager(double current_ms, std::optional<Background>& background) {
-    const double miss_window = (difficulty <= (int)Difficulty::NORMAL)
-                             ? Timing::BAD_EASY : Timing::BAD;
+    if (workout_hold) return;
+    const double miss_window = (difficulty <= (int)Difficulty::NORMAL) ? Timing::BAD_EASY : Timing::BAD;
     while (!don_notes.empty() && don_notes.front().hit_ms + miss_window < current_ms) {
         combo = 0;
         if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
         bad_count++;
+        workout_on_auto_miss();
         note_judgments[don_notes.front().index] = Judgments::BAD;
         if (dan_gauge) dan_gauge->add_bad();
         else if (gauge.has_value()) gauge->add_bad();
@@ -1039,6 +1094,7 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
         combo = 0;
         if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
         bad_count++;
+        workout_on_auto_miss();
         note_judgments[kat_notes.front().index] = Judgments::BAD;
         if (dan_gauge) dan_gauge->add_bad();
         else if (gauge.has_value()) gauge->add_bad();
@@ -1270,7 +1326,76 @@ void Player::check_kusudama(double current_ms, DrumType drum_type, const Note& b
     }
 }
 
-void Player::check_note(double ms_from_start, DrumType drum_type, double current_ms, std::optional<Background>& background) {
+void Player::configure_workout(bool track, bool hold, bool alternate, bool tight_windows) {
+    workout_track = track;
+    workout_hold = hold;
+    workout_alternate = alternate;
+    workout_windows = tight_windows;
+}
+
+void Player::reset_workout_stats() {
+    workout = Player::WorkoutStats();
+}
+
+void Player::workout_on_judge(int code, double delta_ms) {
+    if (!workout_track) return;
+    int hi = (workout_hit_don ? 0 : 2) + (workout_hit_right ? 1 : 0);
+    workout.hands[hi]++;
+    workout.recent[workout.recent_i] = code;
+    workout.recent_i = (workout.recent_i + 1) % 32;
+    if (workout.recent_n < 32) workout.recent_n++;
+    if (code == 4) workout.wrong++;
+    if (code == 1 || code == 2) {
+        int off = (int)std::lround(delta_ms);
+        workout.last_offset = off;
+        workout.has_last = true;
+        workout.offset_sum += delta_ms;
+        workout.offset_n++;
+        workout.timing_off[workout.timing_i] = off;
+        workout.timing_i = (workout.timing_i + 1) % 32;
+        if (workout.timing_n < 32) workout.timing_n++;
+        if (off < 0) workout.early++;
+        else if (off > 0) workout.late++;
+    }
+}
+
+int Player::workout_next_hand() const {
+    const Note* best = nullptr;
+    auto consider = [&](const std::deque<Note>& lane) {
+        if (lane.empty()) return;
+        if (!best || lane.front().hit_ms < best->hit_ms) best = &lane.front();
+    };
+    consider(don_notes);
+    consider(kat_notes);
+    return best ? best->workout_hand : 0;
+}
+
+void Player::workout_on_auto_miss() {
+    if (!workout_track || workout_hold) return;
+    workout.recent[workout.recent_i] = 3;
+    workout.recent_i = (workout.recent_i + 1) % 32;
+    if (workout.recent_n < 32) workout.recent_n++;
+}
+
+void Player::workout_drop_front(std::deque<Note>& lane, int code, std::optional<Background>& background) {
+    if (lane.empty()) return;
+    Note note = lane.front();
+    lane.pop_front();
+    note_judgments[note.index] = Judgments::BAD;
+    auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
+                               note.index, [](const Note& n, int idx) { return n.index < idx; });
+    if (it != draw_note_buffer.end() && *it == note) draw_note_buffer.erase(it);
+    combo = 0;
+    branch_note_count++;
+    if (code != 4) bad_count++;
+    if (dan_gauge) dan_gauge->add_bad();
+    else if (gauge.has_value()) gauge->add_bad();
+    if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
+    if (draw_judge_list.size() < 7) draw_judge_list.push_back(Judgment(Judgments::BAD, false));
+    workout_on_judge(code, 0);
+}
+
+void Player::check_note(double ms_from_start, DrumType drum_type, double current_ms, std::optional<Background>& background, Side side) {
     if (don_notes.empty() && kat_notes.empty() && other_notes.empty()) return;
 
     float good_window_ms;
@@ -1285,6 +1410,8 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
         ok_window_ms = Timing::OK;
         bad_window_ms = Timing::BAD;
     }
+    workout_hit_don = drum_type == DrumType::DON;
+    workout_hit_right = side == Side::RIGHT;
     if (score_method == ScoreMethod::GEN3) {
         base_score = score_init;
         if (9 < combo && combo < 30) {
@@ -1313,7 +1440,185 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
         return;
     }
 
+    if (workout_hold && workout_track) {
+        std::deque<Note>* lanes[2] = {&don_notes, &kat_notes};
+        int which = -1;
+        double best = 0;
+        for (int i = 0; i < 2; ++i) {
+            if (lanes[i]->empty()) continue;
+            if (which < 0 || lanes[i]->front().hit_ms < best) {
+                which = i;
+                best = lanes[i]->front().hit_ms;
+            }
+        }
+        if (which < 0) return;
+        const Note next = lanes[which]->front();
+        bool expect_don = next.type == NoteType::DON || next.type == NoteType::DON_L;
+        if (expect_don != (drum_type == DrumType::DON)) {
+            combo = 0;
+            if (draw_judge_list.size() < 7)
+                draw_judge_list.push_back(Judgment(Judgments::BAD, false));
+            workout_on_judge(4, 0);
+            return;
+        }
+        int got = side == Side::LEFT ? 1 : 2;
+        if (workout_alternate && next.workout_hand != 0 && got != next.workout_hand) {
+            bad_count++;
+            combo = 0;
+            if (draw_judge_list.size() < 7)
+                draw_judge_list.push_back(Judgment(Judgments::BAD, false));
+            if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
+            if (dan_gauge) dan_gauge->add_bad();
+            else if (gauge.has_value()) gauge->add_bad();
+            workout_on_judge(3, 0);
+            return;
+        }
+        bool big = next.type == NoteType::DON_L || next.type == NoteType::KAT_L;
+        if (draw_judge_list.size() < 7)
+            draw_judge_list.push_back(Judgment(Judgments::GOOD, big));
+        lane_hit_effect = LaneHitEffect(drum_type, Judgments::GOOD);
+        note_judgments[next.index] = Judgments::GOOD;
+        good_count++;
+        workout_on_judge(1, 0);
+        score += base_score;
+        if (base_score_list.size() < 5)
+            base_score_list.push_back(ScoreCounterAnimation(player_num, base_score, is_2p));
+        note_correct(next, current_ms);
+        if (dan_gauge) dan_gauge->add_good();
+        else if (gauge.has_value()) gauge->add_good();
+        branch_p_count++;
+        branch_note_count++;
+        if (background.has_value()) background->handle_good(PlayerNum(1 + is_2p));
+        return;
+    }
+
     auto& lane = (drum_type == DrumType::DON) ? don_notes : kat_notes;
+    auto& other_lane = (drum_type == DrumType::DON) ? kat_notes : don_notes;
+    if (workout_track && !workout_hold) {
+        struct Cand {
+            std::deque<Note>* lane = nullptr;
+            size_t index = 0;
+            double hit_ms = 0;
+            double abs_dt = 0;
+            double delta = 0;
+            bool color_ok = false;
+            bool hand_ok = false;
+        };
+        std::vector<Cand> window;
+        std::deque<Note>* lanes[2] = {&don_notes, &kat_notes};
+        const bool want_don = drum_type == DrumType::DON;
+        const int got_hand = side == Side::LEFT ? 1 : 2;
+        for (int li = 0; li < 2; ++li) {
+            auto& scan = *lanes[li];
+            for (size_t i = 0; i < scan.size(); ++i) {
+                double delta = ms_from_start - scan[i].hit_ms;
+                double ad = std::abs(delta);
+                if (ad > bad_window_ms) {
+                    if (scan[i].hit_ms > ms_from_start) break;
+                    continue;
+                }
+                int need = scan[i].workout_hand;
+                window.push_back(Cand{
+                    &scan, i, scan[i].hit_ms, ad, delta,
+                    (li == 0) == want_don,
+                    !workout_alternate || need == 0 || need == got_hand});
+            }
+        }
+        if (window.empty()) return;
+
+        auto closer = [](const Cand& a, const Cand& b) {
+            if (a.abs_dt != b.abs_dt) return a.abs_dt < b.abs_dt;
+            return a.hit_ms < b.hit_ms;
+        };
+        const Cand* best_match = nullptr;
+        const Cand* best_any = nullptr;
+        for (const Cand& cand : window) {
+            if (!best_any || closer(cand, *best_any)) best_any = &cand;
+            if (cand.color_ok && cand.hand_ok && (!best_match || closer(cand, *best_match)))
+                best_match = &cand;
+        }
+
+        auto show_bad = [&]() {
+            if (draw_judge_list.size() < 7)
+                draw_judge_list.push_back(Judgment(Judgments::BAD, false));
+        };
+        if (!best_match) {
+            const Cand& cand = *best_any;
+            combo = 0;
+            if (cand.color_ok && !cand.hand_ok) {
+                Note missed = cand.lane->at(cand.index);
+                cand.lane->erase(cand.lane->begin() + (std::ptrdiff_t)cand.index);
+                note_judgments[missed.index] = Judgments::BAD;
+                auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
+                                           missed.index, [](const Note& n, int idx) { return n.index < idx; });
+                if (it != draw_note_buffer.end() && *it == missed) draw_note_buffer.erase(it);
+                bad_count++;
+                branch_note_count++;
+                if (dan_gauge) dan_gauge->add_bad();
+                else if (gauge.has_value()) gauge->add_bad();
+                if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
+                show_bad();
+                workout_on_judge(3, 0);
+            } else {
+                show_bad();
+                workout_on_judge(4, 0);
+            }
+            return;
+        }
+
+        const Cand picked = *best_match;
+        Note hit = picked.lane->at(picked.index);
+        picked.lane->erase(picked.lane->begin() + (std::ptrdiff_t)picked.index);
+        bool big = hit.type == NoteType::DON_L || hit.type == NoteType::KAT_L;
+        if (picked.abs_dt <= good_window_ms) {
+            if (draw_judge_list.size() < 7)
+                draw_judge_list.push_back(Judgment(Judgments::GOOD, big));
+            lane_hit_effect = LaneHitEffect(drum_type, Judgments::GOOD);
+            note_judgments[hit.index] = Judgments::GOOD;
+            good_count++;
+            workout_on_judge(1, picked.delta);
+            score += base_score;
+            if (base_score_list.size() < 5)
+                base_score_list.push_back(ScoreCounterAnimation(player_num, base_score, is_2p));
+            note_correct(hit, current_ms);
+            if (dan_gauge) dan_gauge->add_good();
+            else if (gauge.has_value()) gauge->add_good();
+            branch_p_count++;
+            branch_note_count++;
+            if (background.has_value()) background->handle_good(PlayerNum(1 + is_2p));
+        } else if (picked.abs_dt <= ok_window_ms) {
+            draw_judge_list.push_back(Judgment(Judgments::OK, big));
+            lane_hit_effect = LaneHitEffect(drum_type, Judgments::OK);
+            note_judgments[hit.index] = Judgments::OK;
+            ok_count++;
+            workout_on_judge(2, picked.delta);
+            int ok_score = 10 * (int)std::floor(base_score / 2.0 / 10.0);
+            score += ok_score;
+            if (base_score_list.size() < 5)
+                base_score_list.push_back(ScoreCounterAnimation(player_num, ok_score, is_2p));
+            note_correct(hit, current_ms);
+            if (dan_gauge) dan_gauge->add_ok();
+            else if (gauge.has_value()) gauge->add_ok();
+            branch_p_count += 0.5;
+            branch_note_count++;
+            if (background.has_value()) background->handle_ok(PlayerNum(1 + is_2p));
+        } else {
+            combo = 0;
+            note_judgments[hit.index] = Judgments::BAD;
+            auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
+                                       hit.index, [](const Note& n, int idx) { return n.index < idx; });
+            if (it != draw_note_buffer.end() && *it == hit) draw_note_buffer.erase(it);
+            bad_count++;
+            branch_note_count++;
+            if (dan_gauge) dan_gauge->add_bad();
+            else if (gauge.has_value()) gauge->add_bad();
+            if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
+            if (draw_judge_list.size() < 7)
+                draw_judge_list.push_back(Judgment(Judgments::BAD, big));
+            workout_on_judge(3, picked.delta);
+        }
+        return;
+    }
     if (lane.empty()) return;
     curr_note = lane.front();
     size_t lane_pos = 0;
@@ -1323,8 +1628,8 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             auto it = std::find_if(notes.begin(), notes.end(), [&](const Note& n) { return n.index > curr_note.index; });
             return it != notes.end() && it->index < next.index;
         };
-        const auto& other_lane = (drum_type == DrumType::DON) ? kat_notes : don_notes;
-        if (!blocked_by(other_lane) && !blocked_by(other_notes) && ms_from_start > next.hit_ms - ok_window_ms) {
+        const auto& blocked_lane = (drum_type == DrumType::DON) ? kat_notes : don_notes;
+        if (!blocked_by(blocked_lane) && !blocked_by(other_notes) && ms_from_start > next.hit_ms - ok_window_ms) {
             combo = 0;
             bad_count++;
             note_judgments[curr_note.index] = Judgments::BAD;
@@ -1334,6 +1639,17 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             branch_note_count++;
             lane.pop_front();
             curr_note = lane.front();
+        }
+    }
+
+    if (workout_alternate && !workout_hold && curr_note.workout_hand != 0) {
+        int got = side == Side::LEFT ? 1 : 2;
+        if (got != curr_note.workout_hand) {
+            bool in_win = ms_from_start >= curr_note.hit_ms - bad_window_ms
+                && ms_from_start <= curr_note.hit_ms + bad_window_ms;
+            if (!in_win) return;
+            workout_drop_front(lane, 3, background);
+            return;
         }
     }
 
@@ -1348,6 +1664,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             lane_hit_effect = LaneHitEffect(drum_type, Judgments::GOOD);
             note_judgments[curr_note.index] = Judgments::GOOD;
             good_count++;
+            if (workout_track) workout_on_judge(1, ms_from_start - curr_note.hit_ms);
             score += base_score;
             if (base_score_list.size() < 5) {
                 base_score_list.push_back(ScoreCounterAnimation(player_num, base_score, is_2p));
@@ -1365,6 +1682,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             lane_hit_effect = LaneHitEffect(drum_type, Judgments::OK);
             note_judgments[curr_note.index] = Judgments::OK;
             ok_count++;
+            if (workout_track) workout_on_judge(2, ms_from_start - curr_note.hit_ms);
             score += 10 * std::floor(base_score / 2 / 10);
             if (base_score_list.size() < 5) {
                 base_score_list.push_back(ScoreCounterAnimation(player_num, 10 * std::floor(base_score / 2 / 10), is_2p));
@@ -1380,6 +1698,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
         } else if ((curr_note.hit_ms - bad_window_ms) <= ms_from_start && ms_from_start <= (curr_note.hit_ms + bad_window_ms)) {
             draw_judge_list.push_back(Judgment(Judgments::BAD, big));
             bad_count++;
+            if (workout_track) workout_on_judge(3, ms_from_start - curr_note.hit_ms);
             combo = 0;
             branch_note_count++;
             // Same note as the GOOD/OK branches: curr_note may be lane[1] (stale head).
@@ -1487,7 +1806,7 @@ void Player::handle_input(double ms_from_start, double current_ms, std::optional
                 ? Side::LEFT : Side::RIGHT;
             spawn_hit_effects(drum_type, side);
             audio.play_sound(drum_type == DrumType::DON ? don_hitsound : kat_hitsound, VolumePreset::HITSOUND);
-            check_note(log_ms, drum_type, current_ms, background);
+            check_note(log_ms, drum_type, current_ms, background, side);
             ++replay_cursor;
         }
         return;
@@ -1519,7 +1838,7 @@ void Player::handle_input(double ms_from_start, double current_ms, std::optional
                 log_type = input.side == Side::LEFT ? InputLogType::KAT_L : InputLogType::KAT_R;
             }
             input_log.insert({ms_from_start, log_type});
-            check_note(ms_from_start, input.drum_type, current_ms, background);
+            check_note(ms_from_start, input.drum_type, current_ms, background, input.side);
         }
     }
 }

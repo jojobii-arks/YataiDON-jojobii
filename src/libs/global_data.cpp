@@ -6,6 +6,7 @@
 #include "script.h"
 #include "text.h"
 #include "audio.h"
+#include "dev_mode.h"
 #include "../objects/global/debug_menu.h"
 #include <spdlog/spdlog.h>
 
@@ -47,7 +48,11 @@ void load_skin() {
         global_tex.load_screen_textures("global");
         script_manager.init(root_skin_path / "Scripts");
         font_manager.init(font_path);
-        audio.init_audio_device(root_skin_path / "Sounds", global_data.config->audio, global_data.config->volume);
+        if (g_dev.no_audio) {
+            spdlog::info("dev: audio device init skipped (silent run)");
+        } else {
+            audio.init_audio_device(root_skin_path / "Sounds", global_data.config->audio, global_data.config->volume);
+        }
         debug_menu.load_fonts();
     } catch (...) {
         spdlog::error("load_skin() failed; rolling back to unloaded state");

@@ -44,6 +44,7 @@ struct KeysConfig {
     int pause_key = 0;
     int back_key = 0;
     int restart_key = 0;
+    int drill_key = 0;
 };
 
 struct Keys1PConfig {
@@ -96,6 +97,36 @@ struct HiddenConfig {
     int fade_percent = 25;
 };
 
+// Workout setup, persisted as [drill] so older bpm/pattern/size keys still load.
+// kind 0 is timed pattern sequences. kind 1 is hit-gated drill.
+struct DrillConfig {
+    int kind = 0;
+    int bpm = 120;
+    double scroll = 1.0;
+    int subdivision = 4;
+    int note_div = 8; // 1/8: eighth notes. 4 beats / note_div.
+    std::string pattern = "dk";
+    std::string sequence = "dk";
+    int size = 8;
+    int repetitions = 8;
+    double pattern_interval = 0.5; // legacy post-pattern gap, unused
+    int pattern_every = 2; // beats from one pattern start to the next
+    double sequence_interval = 0.0;
+    bool endless = false;
+    bool invert = false;
+    bool random_pool = false;
+    bool alternate = false;
+    bool lead_left = false;
+    bool no_miss = false;
+    bool miss_restart = true;
+    int max_misses = 1;
+    bool timer_on = false;
+    int timer_sec = 60;
+    bool metronome = true;
+    int total_notes = 100;
+    int note_spacing = 8;
+};
+
 struct Config {
     GeneralConfig general;
     NetworkConfig network;
@@ -109,6 +140,7 @@ struct Config {
     VolumeConfig volume;
     VideoConfig video;
     HiddenConfig hidden;
+    DrillConfig drill;
 };
 
 std::string getKeyString(int key_code);

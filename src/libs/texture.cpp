@@ -291,10 +291,14 @@ void TextureWrapper::read_tex_obj_data(const Value& tex_mapping, TextureObject* 
                 }
             }
 
-            // Apply crop dimensions to all indices if crop exists in first mapping
+            // Crop sets the source cell. Destination size defaults to that cell,
+            // unless this index gives an explicit x2/y2 (a 1920 skin scaling a
+            // 1280-authored digit atlas up to screen_scale).
             if (has_crop_in_first) {
-                tex_obj->x2[i] = static_cast<int>(crops[0].width * scale);
-                tex_obj->y2[i] = static_cast<int>(crops[0].height * scale);
+                if (!mapping.HasMember("x2"))
+                    tex_obj->x2[i] = static_cast<int>(crops[0].width * scale);
+                if (!mapping.HasMember("y2"))
+                    tex_obj->y2[i] = static_cast<int>(crops[0].height * scale);
             }
         }
     } else if (tex_mapping.IsObject()) {

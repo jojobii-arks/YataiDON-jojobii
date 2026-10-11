@@ -62,7 +62,10 @@ public:
             SLIDE_DURATION_MS, (int)(target - current), false, false, (int)current,
             0.0, std::nullopt, std::nullopt, EaseType::Quadratic);
         slide_anim->start();
-        if (open) ray::ShowCursor(); else ray::HideCursor();
+#ifdef ShowCursor
+#undef ShowCursor
+#endif
+        ray::ShowCursor();
     }
 
     bool is_visible() const {
@@ -85,6 +88,7 @@ public:
         Screens::TITLE, Screens::ENTRY, Screens::SONG_SELECT, Screens::GAME, Screens::GAME_2P,
         Screens::RESULT, Screens::RESULT_2P, Screens::SONG_SELECT_2P, Screens::DAN_SELECT,
         Screens::GAME_DAN, Screens::DAN_RESULT, Screens::PRACTICE_SELECT, Screens::GAME_PRACTICE,
+        Screens::DRILL_SELECT, Screens::GAME_DRILL,
         Screens::SETTINGS, Screens::LOADING, Screens::INPUT_CALI, Screens::GAME_OVER, Screens::INPUT_TEST
     };
 

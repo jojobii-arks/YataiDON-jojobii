@@ -29,6 +29,7 @@
 #include "judge_counter.h"
 #include "score_counter.h"
 #include "score_counter_animation.h"
+#include <deque>
 
 namespace JudgePos {
     inline float X = 0.0f;
@@ -108,10 +109,38 @@ public:
     int get_max_combo() const { return max_combo; }
     int get_combo() const { return combo; }
     int get_total_drumroll() const { return total_drumroll; }
+
+    struct WorkoutStats {
+        int wrong = 0;
+        int early = 0;
+        int late = 0;
+        double offset_sum = 0;
+        int offset_n = 0;
+        int last_offset = 0;
+        bool has_last = false;
+        int hands[4] = {};
+        int recent[32] = {};
+        int recent_i = 0;
+        int recent_n = 0;
+        int timing_off[32] = {};
+        int timing_i = 0;
+        int timing_n = 0;
+    };
+    WorkoutStats workout;
+    void configure_workout(bool track, bool hold, bool alternate, bool tight_windows);
+    void reset_workout_stats();
+    // 1 left, 2 right, 0 if the next note accepts either hand.
+    int workout_next_hand() const;
     int get_scissor_x() const { return lane_cover_tex_id ? virtual_to_screen_x(static_cast<float>(lane_cover_tex_id->x2[0])) : 0; }
     void set_is_dan(bool v) { is_dan = v; }
 
     void reload_for_dan(std::optional<SongParser>& new_parser, int new_difficulty);
+    // Swap the chart and zero the run. Does not discard the gauge the way dan reloads do.
+    void reload_chart(std::optional<SongParser>& new_parser, int new_difficulty);
+    // Keep the current parser's generated notes in sync without rebuilding the run.
+    void adopt_parser(std::optional<SongParser>& new_parser);
+    // Append later notes (endless drill). Does not reset judgment or the gauge.
+    void append_notes(const NoteList& extra);
 
     void spawn_ending_anim(Background* background = nullptr);
 
@@ -210,6 +239,13 @@ private:
 
     double resume_filter_ms = -1e18;
 
+    bool workout_track = false;
+    bool workout_hold = false;
+    bool workout_alternate = false;
+    bool workout_windows = false;
+    bool workout_hit_don = true;
+    bool workout_hit_right = false;
+
     std::string don_hitsound;
     std::string kat_hitsound;
 
@@ -297,7 +333,10 @@ private:
 
     void check_kusudama(double current_ms, DrumType drum_type, const Note& balloon, std::optional<Background>& background);
 
-    void check_note(double ms_from_start, DrumType drum_type, double current_ms, std::optional<Background>& background);
+    void check_note(double ms_from_start, DrumType drum_type, double current_ms, std::optional<Background>& background, Side side = Side::LEFT);
+    void workout_on_judge(int code, double delta_ms);
+    void workout_on_auto_miss();
+    void workout_drop_front(std::deque<Note>& lane, int code, std::optional<Background>& background);
 
     void drumroll_counter_manager(double current_ms);
 

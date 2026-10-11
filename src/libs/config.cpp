@@ -1,4 +1,5 @@
 #include "config.h"
+#include "drill.h"
 #include "ray.h"
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -296,6 +297,52 @@ Config get_config() {
     config.keys.pause_key = getKeyCodeOrDefault(config_file["keys"]["pause_key"].value_or("p"), "p");
     config.keys.back_key = getKeyCodeOrDefault(config_file["keys"]["back_key"].value_or("escape"), "escape");
     config.keys.restart_key = getKeyCodeOrDefault(config_file["keys"]["restart_key"].value_or("r"), "r");
+    config.keys.drill_key = getKeyCodeOrDefault(config_file["keys"]["drill_key"].value_or("f2"), "f2");
+
+    {
+        auto drill_node = config_file["drill"];
+        auto read_double = [&](const char* key, double fallback) {
+            if (auto v = drill_node[key].value<double>()) return *v;
+            if (auto v = drill_node[key].value<int64_t>()) return (double)*v;
+            return fallback;
+        };
+        auto read_bool = [&](const char* key, bool fallback) {
+            if (auto v = drill_node[key].value<bool>()) return *v;
+            return fallback;
+        };
+        config.drill.bpm = (int)drill_node["bpm"].value_or(120);
+        config.drill.subdivision = (int)drill_node["subdivision"].value_or(4);
+        config.drill.note_div = (int)drill_node["note_div"].value_or(8);
+        config.drill.pattern = drill_node["pattern"].value_or(std::string("dk"));
+        config.drill.size = (int)drill_node["size"].value_or(0);
+        config.drill.kind = (int)drill_node["kind"].value_or(0);
+        config.drill.scroll = read_double("scroll", 1.0);
+        if (auto seq = drill_node["sequence"].value<std::string>())
+            config.drill.sequence = *seq;
+        else
+            config.drill.sequence = config.drill.pattern;
+        if (auto reps = drill_node["repetitions"].value<int64_t>())
+            config.drill.repetitions = (int)*reps;
+        else
+            config.drill.repetitions = config.drill.size > 0 ? config.drill.size : 8;
+        config.drill.pattern_interval = read_double("pattern_interval", 0.5);
+        config.drill.pattern_every = (int)drill_node["pattern_every"].value_or(2);
+        config.drill.sequence_interval = read_double("sequence_interval", 0.0);
+        config.drill.endless = read_bool("endless", false);
+        config.drill.invert = read_bool("invert", false);
+        config.drill.random_pool = read_bool("random_pool", false);
+        config.drill.alternate = read_bool("alternate", false);
+        config.drill.lead_left = read_bool("lead_left", false);
+        config.drill.no_miss = read_bool("no_miss", false);
+        config.drill.miss_restart = read_bool("miss_restart", true);
+        config.drill.max_misses = (int)drill_node["max_misses"].value_or(1);
+        config.drill.timer_on = read_bool("timer", false);
+        config.drill.timer_sec = (int)drill_node["timer_sec"].value_or(60);
+        config.drill.metronome = read_bool("metronome", true);
+        config.drill.total_notes = (int)drill_node["total_notes"].value_or(100);
+        config.drill.note_spacing = (int)drill_node["note_spacing"].value_or(8);
+        config.drill = normalize_drill_config(config.drill);
+    }
 
     // Parse keys_1p
     if (auto left_kat = config_file["keys_1p"]["left_kat"].as_array()) {
@@ -463,7 +510,8 @@ void save_config(const Config& config) {
         {"borderless_key", getKeyStringSafe(config.keys.borderless_key)},
         {"pause_key", getKeyStringSafe(config.keys.pause_key)},
         {"back_key", getKeyStringSafe(config.keys.back_key)},
-        {"restart_key", getKeyStringSafe(config.keys.restart_key)}
+        {"restart_key", getKeyStringSafe(config.keys.restart_key)},
+        {"drill_key", getKeyStringSafe(config.keys.drill_key)}
     });
 
     // Keys 1P
@@ -546,6 +594,34 @@ void save_config(const Config& config) {
         {"borderless", config.video.borderless},
         {"target_fps", config.video.target_fps},
         {"vsync", config.video.vsync}
+    });
+
+    config_table.insert("drill", toml::table{
+        {"kind", config.drill.kind},
+        {"bpm", config.drill.bpm},
+        {"scroll", config.drill.scroll},
+        {"subdivision", config.drill.subdivision},
+        {"note_div", config.drill.note_div},
+        {"pattern", config.drill.pattern},
+        {"sequence", config.drill.sequence},
+        {"size", config.drill.size},
+        {"repetitions", config.drill.repetitions},
+        {"pattern_interval", config.drill.pattern_interval},
+        {"pattern_every", config.drill.pattern_every},
+        {"sequence_interval", config.drill.sequence_interval},
+        {"endless", config.drill.endless},
+        {"invert", config.drill.invert},
+        {"random_pool", config.drill.random_pool},
+        {"alternate", config.drill.alternate},
+        {"lead_left", config.drill.lead_left},
+        {"no_miss", config.drill.no_miss},
+        {"miss_restart", config.drill.miss_restart},
+        {"max_misses", config.drill.max_misses},
+        {"timer", config.drill.timer_on},
+        {"timer_sec", config.drill.timer_sec},
+        {"metronome", config.drill.metronome},
+        {"total_notes", config.drill.total_notes},
+        {"note_spacing", config.drill.note_spacing}
     });
 
     fs::path tmp_path = config_path;

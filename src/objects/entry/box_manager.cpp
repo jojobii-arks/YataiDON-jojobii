@@ -35,12 +35,16 @@ void BoxManager::build_board_list() {
         box_locations.push_back(Screens::DAN_SELECT);
         boxes.push_back(std::make_unique<Box>(dan_text, font_size, Screens::DAN_SELECT));
     }
-    for (auto [screen, sc] : {std::pair{Screens::PRACTICE_SELECT, SC::ENTRY_PRACTICE},
-                              std::pair{Screens::ENTRY,           SC::ENTRY_COSTUME},
-                              std::pair{Screens::SETTINGS,        SC::ENTRY_SETTINGS}}) {
-        box_locations.push_back(screen);
-        boxes.push_back(std::make_unique<Box>(skin[sc].text[lang], font_size, screen));
+    box_locations.push_back(Screens::PRACTICE_SELECT);
+    boxes.push_back(std::make_unique<Box>(skin[SC::ENTRY_PRACTICE].text[lang], font_size, Screens::PRACTICE_SELECT));
+    if (!is_2p) {
+        box_locations.push_back(Screens::DRILL_SELECT);
+        boxes.push_back(std::make_unique<Box>("Workout", font_size, Screens::DRILL_SELECT));
     }
+    box_locations.push_back(Screens::ENTRY);
+    boxes.push_back(std::make_unique<Box>(skin[SC::ENTRY_COSTUME].text[lang], font_size, Screens::ENTRY));
+    box_locations.push_back(Screens::SETTINGS);
+    boxes.push_back(std::make_unique<Box>(skin[SC::ENTRY_SETTINGS].text[lang], font_size, Screens::SETTINGS));
 
     num_boxes = boxes.size();
 

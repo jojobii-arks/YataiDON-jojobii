@@ -3,6 +3,9 @@
 #include "../libs/input.h"
 #include <algorithm>
 #include <cmath>
+#ifdef ShowCursor
+#undef ShowCursor
+#endif
 
 // Forward declaration for set_touch_drum_enabled from input.cpp
 extern void set_touch_drum_enabled(bool enabled);
@@ -64,7 +67,7 @@ void PracticeGameScreen::on_screen_start() {
     speed_r_kat_anim = (TextureResizeAnimation*)tex.get_animation(67, true);
     mark_action_anim = (TextureResizeAnimation*)tex.get_animation(67, true);
     mark_finish_anim = (TextureResizeAnimation*)tex.get_animation(67, true);
-    ray::HideCursor();  // Hide cursor when entering practice mode
+    ray::ShowCursor();
     set_touch_drum_enabled(true);      // Enable touch drum (input + drawing) when entering practice mode
     init_tja_practice(global_data.session_data[(int)global_data.player_num].selected_song);
 }
@@ -78,7 +81,7 @@ Screens PracticeGameScreen::on_screen_end(Screens next_screen) {
     bars.clear();
     scrobble_note_list.clear();
     markers.clear();
-    ray::HideCursor();  // Hide cursor when leaving practice mode
+    ray::ShowCursor();
     set_touch_drum_enabled(true);      // Re-enable touch drum (input + drawing) when leaving practice mode
     return GameScreen::on_screen_end(next_screen);
 }
@@ -185,7 +188,7 @@ void PracticeGameScreen::pause_song_practice() {
     set_touch_drum_enabled(!paused);   // Enable/disable touch drum (input + drawing)
 
     // Show/hide mouse cursor when pausing/unpausing
-    if (paused) ray::ShowCursor(); else ray::HideCursor();
+    ray::ShowCursor();
 
     if (paused) {
         if (song_music.has_value()) {
@@ -246,7 +249,7 @@ void PracticeGameScreen::restart_practice() {
     audio.play_sound("restart", VolumePreset::SOUND);
     song_started = false;
     paused       = false;
-    ray::HideCursor();  // Hide cursor on restart
+    ray::ShowCursor();
     set_touch_drum_enabled(true);      // Re-enable touch drum (input + drawing) on restart
     menu.close();
     last_resync_ms = 0;

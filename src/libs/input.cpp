@@ -1,4 +1,6 @@
 #include "input.h"
+#include "dev_mode.h"
+#include <string>
 #include "animation.h"
 #include "spdlog/spdlog.h"
 #include "texture.h"
@@ -421,6 +423,24 @@ void input_polling_thread() {
         poll_keyboard_once();
         std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
+}
+
+// Dev/screenshot runs: queue a synthetic press in the same buffer the
+// polling thread fills, so screens react exactly as they would to a real hit.
+// Never emits OS-level events.
+void dev_inject_input(const std::string& name) {
+    int code = 0;
+    if (name == "reload") { g_dev.reload_requested = true; return; }
+    if      (name == "don"   || name == "ldon" || name == "enter") code = TOUCH_L_DON;
+    else if (name == "rdon")                                        code = TOUCH_R_DON;
+    else if (name == "kat"   || name == "lkat" || name == "left")  code = TOUCH_L_KAT;
+    else if (name == "rkat"  || name == "right")                    code = TOUCH_R_KAT;
+    else {
+        spdlog::warn("dev_inject_input: unknown input '{}'", name);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(input_mutex);
+    pressed_keys.insert(code);
 }
 
 bool check_key_pressed(int key) {

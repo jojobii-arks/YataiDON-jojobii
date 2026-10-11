@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -5,6 +6,7 @@
 
 #include "libs/animation.h"
 #include "libs/audio.h"
+#include "libs/dev_mode.h"
 #include "libs/global_data.h"
 #include "libs/filesystem.h"
 #include "libs/input.h"
@@ -26,10 +28,12 @@
 
 #include "scenes/dan_result.h"
 #include "scenes/dan_select.h"
+#include "scenes/drill_select.h"
 #include "scenes/entry.h"
 #include "scenes/game.h"
 #include "scenes/game_2p.h"
 #include "scenes/game_dan.h"
+#include "scenes/game_drill.h"
 #include "scenes/game_practice.h"
 #include "scenes/input_cali.h"
 #include "scenes/input_test.h"
@@ -46,6 +50,7 @@
 #include "objects/global/debug_menu.h"
 #include "objects/global/fps_counter.h"
 #include "objects/global/hidden_helper.h"
+#include "objects/song_select/file_navigator/navigator.h"
 
 void draw_outer_border(int screen_width, int screen_height, ray::Color last_color) {
     DrawRectangle(-screen_width, 0, screen_width, screen_height, last_color);
@@ -73,6 +78,32 @@ static std::filesystem::path path_from_arg(const std::string& arg) {
 #endif
 }
 
+// "--screen song_select" / "song_select" / "SONG-SELECT" -> Screens::SONG_SELECT
+static std::optional<Screens> screen_from_name(const std::string& raw) {
+    std::string name;
+    name.reserve(raw.size());
+    for (char c : raw) {
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        else if (c == '-' || c == ' ') c = '_';
+        name.push_back(c);
+    }
+    for (int i = 0; i <= static_cast<int>(Screens::GAME_DRILL); i++) {
+        Screens s = static_cast<Screens>(i);
+        if (screens_to_string(s) == name) return s;
+    }
+    if (name == "SONGS") return Screens::SONG_SELECT;
+    if (name == "MENU")  return Screens::ENTRY;
+    if (name == "DAN")   return Screens::DAN_SELECT;
+    return std::nullopt;
+}
+
+// Set from --screen once check_args() has validated it. The LOADING screen
+// normally hands off to TITLE/ENTRY; when a target is set that handoff is
+// redirected, so the requested screen is entered right after the song library
+// finishes loading (song select needs the navigator preloaded by then).
+static std::optional<Screens> dev_target_screen;
+static bool dev_jump_done = false;
+
 Screens check_args(int argc, char* argv[]) {
     if (argc == 1) {
         return Screens::LOADING;
@@ -86,16 +117,95 @@ Screens check_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
+        auto need_value = [&](const char* flag) -> std::string {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: " << flag << " requires a value\n";
+                exit_now(1);
+            }
+            return argv[++i];
+        };
+
         if (arg == "--auto") {
             auto_play = true;
         } else if (arg == "--practice") {
             practice = true;
+        } else if (arg == "--dev") {
+            g_dev.enabled = true;
+            g_dev.no_audio = true;
+            g_dev.offline = true;
+            g_dev.hidden_window = true;
+        } else if (arg == "--no-audio") {
+            g_dev.enabled = true;
+            g_dev.no_audio = true;
+        } else if (arg == "--offline") {
+            g_dev.enabled = true;
+            g_dev.offline = true;
+        } else if (arg == "--hidden") {
+            g_dev.enabled = true;
+            g_dev.hidden_window = true;
+        } else if (arg == "--visible") {
+            g_dev.enabled = true;
+            g_dev.hidden_window = false;
+        } else if (arg == "--window-pos") {
+            g_dev.enabled = true;
+            g_dev.window_pos = need_value("--window-pos");
+        } else if (arg == "--screen") {
+            g_dev.enabled = true;
+            g_dev.screen = need_value("--screen");
+        } else if (arg == "--shot") {
+            g_dev.enabled = true;
+            g_dev.shot_path = need_value("--shot");
+        } else if (arg == "--shot-wait") {
+            g_dev.enabled = true;
+            try {
+                g_dev.shot_wait_seconds = std::stod(need_value("--shot-wait"));
+            } catch (const std::exception&) {
+                std::cerr << "Error: --shot-wait expects a number of seconds\n";
+                exit_now(1);
+            }
+        } else if (arg == "--keep-open") {
+            g_dev.enabled = true;
+            g_dev.exit_after_shot = false;
+        } else if (arg == "--keys") {
+            g_dev.enabled = true;
+            std::string list = need_value("--keys");
+            std::string item;
+            for (size_t c = 0; c <= list.size(); c++) {
+                if (c == list.size() || list[c] == ',') {
+                    if (!item.empty()) g_dev.keys.push_back(item);
+                    item.clear();
+                } else if (list[c] != ' ') {
+                    item.push_back(list[c]);
+                }
+            }
+        } else if (arg == "--key-gap") {
+            g_dev.enabled = true;
+            try {
+                g_dev.key_gap_seconds = std::stod(need_value("--key-gap"));
+            } catch (const std::exception&) {
+                std::cerr << "Error: --key-gap expects a number of seconds\n";
+                exit_now(1);
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " <song_path> [difficulty] [--auto] [--practice]\n";
             std::cout << "  song_path   : Path to the TJA song file\n";
             std::cout << "  difficulty  : Difficulty level (optional, defaults to max difficulty)\n";
             std::cout << "  --auto      : Enable auto mode\n";
             std::cout << "  --practice  : Start in practice mode\n";
+            std::cout << "Dev / capture mode (writes only inside the working directory):\n";
+            std::cout << "  --dev       : no audio + offline + hidden window\n";
+            std::cout << "  --no-audio  : skip audio device init (silent, no ASIO contention)\n";
+            std::cout << "  --offline   : never touch the network\n";
+            std::cout << "  --hidden / --visible : render with the window hidden (default off) or shown\n";
+            std::cout << "  --window-pos X,Y : park a visible dev window at a screen position\n";
+            std::cout << "  --screen NAME : screen to enter after loading "
+                         "(song_select, entry, result, dan_select, drill_select, settings, ...)\n";
+            std::cout << "  --shot FILE.png : auto-screenshot once the target screen settles\n";
+            std::cout << "  --shot-wait SEC : settle time before the shot (default 2.0)\n";
+            std::cout << "  --keys don,right,right : inputs to inject before the shot "
+                         "(don, kat, left, right, reload; F8 also reloads the skin)\n";
+            std::cout << "  --key-gap SEC : spacing between injected inputs (default 0.4)\n";
+            std::cout << "  --keep-open : stay running after the shot instead of quitting\n";
             exit_now(0);
         } else if (!arg.empty() && arg[0] == '-') {
             std::cerr << "Error: Unknown option: " << arg << "\n";
@@ -116,6 +226,18 @@ Screens check_args(int argc, char* argv[]) {
             std::cerr << "Error: Unexpected extra argument: " << arg << "\n";
             exit_now(1);
         }
+    }
+
+    if (!g_dev.screen.empty() && !screen_from_name(g_dev.screen).has_value()) {
+        std::cerr << "Error: Unknown --screen value: " << g_dev.screen << "\n";
+        std::cerr << "Use --help for the full option list\n";
+        exit_now(1);
+    }
+
+    if (g_dev.enabled && song_path.empty()) {
+        // A dev run does not need a song file: boot normally and let --screen
+        // redirect the handoff once the song library has loaded.
+        return Screens::LOADING;
     }
 
     if (song_path.empty()) {
@@ -195,7 +317,7 @@ struct LoopState {
 static bool screen_fade_applies(Screens from, Screens to) {
     switch (to) {
         case Screens::GAME: case Screens::GAME_2P: case Screens::GAME_DAN:
-        case Screens::GAME_PRACTICE: case Screens::AI_GAME:
+        case Screens::GAME_PRACTICE: case Screens::GAME_DRILL: case Screens::AI_GAME:
         case Screens::RESULT: case Screens::RESULT_2P: case Screens::DAN_RESULT:
             return false;
         default: break;
@@ -224,6 +346,8 @@ static void populate_screens(std::unordered_map<Screens, std::unique_ptr<Screen>
     if (except != Screens::RESULT_2P)       screens[Screens::RESULT_2P]       = std::make_unique<Result2PScreen>();
     if (except != Screens::DAN_SELECT)      screens[Screens::DAN_SELECT]      = std::make_unique<DanSelectScreen>();
     if (except != Screens::GAME_DAN)        screens[Screens::GAME_DAN]        = std::make_unique<DanGameScreen>();
+    if (except != Screens::DRILL_SELECT)    screens[Screens::DRILL_SELECT]    = std::make_unique<DrillSelectScreen>();
+    if (except != Screens::GAME_DRILL)      screens[Screens::GAME_DRILL]      = std::make_unique<DrillGameScreen>();
     if (except != Screens::DAN_RESULT)      screens[Screens::DAN_RESULT]      = std::make_unique<DanResultScreen>();
     if (except != Screens::SETTINGS)        screens[Screens::SETTINGS]        = std::make_unique<SettingsScreen>();
     if (except != Screens::INPUT_CALI)      screens[Screens::INPUT_CALI]      = std::make_unique<InputCaliScreen>();
@@ -244,6 +368,42 @@ void reload_skin_screens() {
     populate_screens(g_loop->screens, g_loop->current_screen);
 }
 
+static void save_screenshot(const std::string& path, Screens current_screen) {
+    if (path.empty()) return;
+    ray::Image image = ray::LoadImageFromScreen();
+    if (current_screen == Screens::RESULT) {
+        ray::ImageCrop(&image, {0, 0, (float)image.width, (float)image.height / 2.0f});
+    }
+    std::error_code ec;
+    std::filesystem::path file(path);
+    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path(), ec);
+    ray::ExportImage(image, path.c_str());
+    ray::UnloadImage(image);
+}
+
+// F8 during a dev run: rebuild every screen against a freshly loaded skin so
+// Lua/asset edits show up without restarting. Mirrors the reload sequence the
+// settings screen performs, but covers the current screen as well.
+static void dev_reload_skin() {
+    if (!g_loop) return;
+    LoopState& L = *g_loop;
+    if (L.current_screen == Screens::LOADING) {
+        spdlog::warn("dev: skin reload skipped while the song library is loading");
+        return;
+    }
+    Screens keep = L.current_screen;
+    spdlog::info("dev: reloading skin (F8)");
+    L.screens.clear();          // every screen holds state bound to the old skin
+    navigator.script = nullptr; // owned by the SongSelectScreen being destroyed
+    navigator.reset_for_skin_reload();
+    unload_skin();
+    load_skin();
+    populate_screens(L.screens);
+    L.current_screen = keep;
+    global_data.current_screen = screens_to_string(keep);
+    L.screen_fade_start = 0.0;
+}
+
 static void run_frame() {
     LoopState& L = *g_loop;
 
@@ -255,6 +415,13 @@ static void run_frame() {
     poll_keyboard_once();
 #endif
     poll_touch_once();
+
+    if (g_dev.enabled && g_dev.reload_requested) {
+        g_dev.reload_requested = false;
+        dev_reload_skin();
+    } else if (g_dev.enabled && check_key_pressed(ray::KEY_F8)) {
+        dev_reload_skin();
+    }
 
     if (check_key_pressed(global_data.config->keys.fullscreen_key)) {
         ray::ToggleFullscreen();
@@ -320,6 +487,14 @@ static void run_frame() {
         debug_menu.requested_screen.reset();
     }
 
+    if (dev_target_screen.has_value() && !dev_jump_done &&
+        L.current_screen == Screens::LOADING && next_screen.has_value()) {
+        // Song library is ready: go straight to the --screen target.
+        next_screen = dev_target_screen.value();
+        dev_jump_done = true;
+        spdlog::info("dev: heading to {} after load", dev_target_screen.value());
+    }
+
     if (screen->screen_init) {
         screen->_do_draw();
     }
@@ -370,14 +545,59 @@ static void run_frame() {
 
     if (ray::IsKeyPressed(ray::KEY_F12)) {
         static int screenshot_counter = 0;
-        ray::Image image = ray::LoadImageFromScreen();
-        if (L.current_screen == Screens::RESULT) {
-            ray::ImageCrop(&image, {0, 0, (float)image.width, (float)image.height / 2.0f});
-        }
-        ray::ExportImage(image, ray::TextFormat("screenshot%03i.png", screenshot_counter));
-        ray::UnloadImage(image);
+        char name[64];
+        std::snprintf(name, sizeof(name), "screenshot%03i.png", screenshot_counter);
+        save_screenshot(name, L.current_screen);
         screenshot_counter++;
         spdlog::info("Screenshot saved");
+    }
+
+    if (g_dev.enabled && !g_dev.shot_path.empty()) {
+        static bool armed = false;
+        static bool shot_done = false;
+        static size_t key_index = 0;
+        static std::chrono::steady_clock::time_point arm_time;
+        static std::chrono::steady_clock::time_point last_key_time;
+        const bool on_target = !dev_target_screen.has_value() ||
+                               L.current_screen == dev_target_screen.value();
+        auto seconds = [](double s) {
+            return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(s));
+        };
+        if (!shot_done) {
+            if (!on_target) {
+                armed = false;
+            } else {
+                const auto now = std::chrono::steady_clock::now();
+                if (!armed) {
+                    // Wait until the screen transition has finished before
+                    // touching input: pressing during a fade or while the
+                    // navigator is still loading gets the press swallowed and
+                    // makes the run non-reproducible.
+                    if (L.screen_fade_start == 0.0) {
+                        armed = true;
+                        arm_time = now;
+                        last_key_time = now;
+                    }
+                } else {
+                    // Walk to the state we want to photograph, one input at a time.
+                    if (key_index < g_dev.keys.size() && now - last_key_time >= seconds(g_dev.key_gap_seconds)) {
+                        dev_inject_input(g_dev.keys[key_index]);
+                        spdlog::info("dev: injected '{}' ({}/{})", g_dev.keys[key_index],
+                                     key_index + 1, g_dev.keys.size());
+                        key_index++;
+                        last_key_time = now;
+                        arm_time = now;
+                    }
+                    if (key_index >= g_dev.keys.size() && now - arm_time >= seconds(g_dev.shot_wait_seconds)) {
+                        save_screenshot(g_dev.shot_path, L.current_screen);
+                        shot_done = true;
+                        spdlog::info("dev: screenshot written to {}", g_dev.shot_path);
+                        if (g_dev.exit_after_shot) g_dev.quit = true;
+                    }
+                }
+            }
+        }
     }
 
 #if !defined(__EMSCRIPTEN__) && !defined(YATAIDON_PLATFORM_IOS)
@@ -401,9 +621,22 @@ int main(int argc, char* argv[]) {
     set_working_directory_to_executable();
     global_data.config = new Config(get_config());
     Screens initial_screen = check_args(argc, argv);
+    if (initial_screen == Screens::LOADING && !g_dev.screen.empty()) {
+        dev_target_screen = screen_from_name(g_dev.screen);
+        spdlog::info("dev: target screen {} after load", dev_target_screen.value());
+    }
+    if (g_dev.enabled && !g_dev.keys.empty()) {
+        std::string joined;
+        for (const auto& k : g_dev.keys) joined += " "+ k;
+        spdlog::info("dev: input sequence:{}", joined);
+    }
     init_scores_manager(global_data.config->general.score_method == ScoreMethod::GEN3);
     init_tier_list();
     unsigned int flags = ray::FLAG_WINDOW_RESIZABLE;
+    if (g_dev.hidden_window) {
+        flags |= ray::FLAG_WINDOW_HIDDEN;
+        spdlog::info("dev: window will be hidden");
+    }
     if (global_data.config->video.vsync) {
         flags |= ray::FLAG_VSYNC_HINT;
         spdlog::info("VSync enabled");
@@ -417,6 +650,19 @@ int main(int argc, char* argv[]) {
 
     ray::InitWindow(1280, 720, "YataiDON");
     load_skin();
+
+    if (!g_dev.window_pos.empty()) {
+        try {
+            const auto comma = g_dev.window_pos.find(',');
+            if (comma == std::string::npos) throw std::invalid_argument(g_dev.window_pos);
+            const int px = std::stoi(g_dev.window_pos.substr(0, comma));
+            const int py = std::stoi(g_dev.window_pos.substr(comma + 1));
+            ray::SetWindowPosition(px, py);
+            spdlog::info("dev: window parked at {},{}", px, py);
+        } catch (const std::exception&) {
+            spdlog::error("dev: bad --window-pos '{}' (expected \"X,Y\")", g_dev.window_pos);
+        }
+    }
 
     scores_manager.player_1 = global_data.config->general.player_1_id;
     scores_manager.player_2 = global_data.config->general.player_2_id;
@@ -434,7 +680,7 @@ int main(int argc, char* argv[]) {
     ios_initialize_after_window();
 #endif
 
-    const bool net_ok = network.probe_online();
+    const bool net_ok = !g_dev.offline && network.probe_online();
     if (net_ok && global_data.config->network.access_code.empty()) {
         std::string access_code = network.register_user(scores_manager.player_1_data.username);
         if (!access_code.empty()) {
@@ -520,13 +766,17 @@ int main(int argc, char* argv[]) {
     L.camera = compute_camera2d(tex.screen_width, tex.screen_height);
 
 #if !defined(__EMSCRIPTEN__) && !defined(YATAIDON_PLATFORM_IOS)
-    if (global_data.config->video.borderless) {
-        ray::ToggleBorderlessWindowed();
-        spdlog::info("Borderless window enabled");
-    }
-    if (global_data.config->video.fullscreen) {
-        ray::ToggleFullscreen();
-        spdlog::info("Fullscreen enabled");
+    if (g_dev.hidden_window) {
+        spdlog::info("dev: keeping the window at skin size (hidden)");
+    } else {
+        if (global_data.config->video.borderless) {
+            ray::ToggleBorderlessWindowed();
+            spdlog::info("Borderless window enabled");
+        }
+        if (global_data.config->video.fullscreen) {
+            ray::ToggleFullscreen();
+            spdlog::info("Fullscreen enabled");
+        }
     }
 #endif
 
@@ -536,7 +786,10 @@ int main(int argc, char* argv[]) {
 #else
     ray::SetExitKey(global_data.config->keys.exit_key);
 #endif
-    ray::HideCursor();
+#ifdef ShowCursor
+#undef ShowCursor
+#endif
+    ray::ShowCursor();
 
     L.next_frame_time = std::chrono::steady_clock::now();
 #ifdef __EMSCRIPTEN__
@@ -546,7 +799,8 @@ int main(int argc, char* argv[]) {
 #else
     input_thread = std::thread(input_polling_thread);
 
-    while (!ray::WindowShouldClose() && !check_key_pressed(global_data.config->keys.exit_key)) {
+    while (!ray::WindowShouldClose() && !check_key_pressed(global_data.config->keys.exit_key) &&
+           !g_dev.quit) {
         run_frame();
     }
 

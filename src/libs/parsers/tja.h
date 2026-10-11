@@ -79,6 +79,8 @@ public:
     bool display;
     int index;
     int moji;
+    // 0 = any hand, 1 = left, 2 = right. Workout alternate-hits reads this.
+    int workout_hand = 0;
     bool is_branch_start;
     // Drumroll specific
     std::optional<int> color;

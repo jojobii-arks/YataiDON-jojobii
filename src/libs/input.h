@@ -38,6 +38,12 @@ double get_last_input_ms();
 // Clear all buffered input events
 // Useful when changing screens or locking input
 void clear_input_buffers();
+
+// Dev/screenshot runs: queue a synthetic input press. Names: don, kat,
+// ldon, rdon, lkat, rkat (aliases: enter/left/right). Injected directly
+// into the press buffer, so no OS-level key events are emitted and the
+// user's own session / other game instances can never see them.
+void dev_inject_input(const std::string& name);
 void shutdown_sdl_joysticks();
 void android_set_keyboard_visible(bool visible);
 

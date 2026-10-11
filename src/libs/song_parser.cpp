@@ -46,6 +46,16 @@ SongParser::SongParser(const fs::path& path, int start_delay, PlayerNum player_n
     sync();
 }
 
+SongParser::SongParser(SyntheticParser synth) {
+    impl = std::move(synth);
+    sync();
+}
+
+void SongParser::set_synthetic_notes(NoteList notes) {
+    if (auto* synth = std::get_if<SyntheticParser>(&impl))
+        synth->notes = std::move(notes);
+}
+
 void SongParser::sync() {
     std::visit([this](auto& p) {
         metadata  = p.metadata;
