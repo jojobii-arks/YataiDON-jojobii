@@ -1,10 +1,10 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.24)
 project(YataiDON VERSION 1.0.5 LANGUAGES C CXX)
 
 cmake_policy(SET CMP0002 NEW)  # Logical target names must be globally unique
 cmake_policy(SET CMP0079 NEW)  # Allow target_link_libraries() everywhere
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -12,6 +12,12 @@ set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON CACHE INTERNAL "")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
+endif()
+
+if(EMSCRIPTEN)
+  # std::thread is used throughout; every object (deps included) must be built with atomics.
+  add_compile_options(-pthread)
+  add_link_options(-pthread)
 endif()
 
 include(FetchContent)
@@ -39,7 +45,7 @@ endif()
 
 set(NETWORK_URL "${_env_NETWORK_URL}" CACHE STRING "Base URL of the server backend")
 set(NETWORK_AUTH_KEY "${_env_NETWORK_AUTH_KEY}" CACHE STRING "Auth key for the server backend")
-if(NETWORK_URL AND NETWORK_AUTH_KEY)
+if(NETWORK_URL AND NETWORK_AUTH_KEY AND NOT EMSCRIPTEN)
   set(NETWORK_ENABLED ON)
 else()
   set(NETWORK_ENABLED OFF)
@@ -47,7 +53,7 @@ endif()
 
 set(DATATABLE_SEED "${_env_DATATABLE_SEED}" CACHE STRING "Decryption seed for the gen 4 datatable")
 set(FUMEN_SEED "${_env_FUMEN_SEED}" CACHE STRING "Decryption seed for gen 4 fumen")
-if(DATATABLE_SEED AND FUMEN_SEED)
+if(DATATABLE_SEED AND FUMEN_SEED AND NOT EMSCRIPTEN)  # optional features need FFmpeg etc.
   set(SUPPORT_FUMEN ON)
 else()
   set(SUPPORT_FUMEN OFF)
@@ -118,6 +124,16 @@ if(SUPPORT_FUMEN)
   list(APPEND CppFiles ${Gen4CppFiles})
 endif()
 
+# Card reader
+if(NETWORK_ENABLED AND ((UNIX AND NOT ANDROID AND NOT APPLE_IOS AND NOT EMSCRIPTEN) OR WIN32))
+  file(GLOB CARD_READER_SOURCES src/libs/optional/card_reader.cpp)
+  list(APPEND CppFiles ${CARD_READER_SOURCES})
+  set(CARD_READER_ENABLED ON)
+  message(STATUS "Card reader enabled")
+elseif(NETWORK_ENABLED)
+  message(STATUS "Card reader not available on this platform (requires POSIX or Windows)")
+endif()
+
 list(APPEND CppFiles ${PLATFORM_SOURCES})
 
 message(STATUS "C++ files found: ${CppFiles}")
@@ -164,8 +180,14 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated
 )
+if(ANDROID AND DEFINED ANDROID_OPENSSL_PREFIX)
+    target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
+        ${ANDROID_OPENSSL_PREFIX}/include
+    )
+endif()
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
     ${raylib_SOURCE_DIR}/src/external
     ${rapidjson_SOURCE_DIR}/include
@@ -182,9 +204,21 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     miniz
 )
 
-if(NETWORK_ENABLED)
+if(NOT EMSCRIPTEN)
   target_link_libraries(${PROJECT_NAME} PRIVATE cpr::cpr)
+endif()
+
+if(YATAIDON_PROFILER)
+  target_link_libraries(${PROJECT_NAME} PRIVATE Tracy::TracyClient)
+endif()
+
+if(CARD_READER_ENABLED)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE CARD_READER_ENABLED)
+endif()
+
+if(NETWORK_ENABLED)
   target_compile_definitions(${PROJECT_NAME} PRIVATE
+    NETWORK_ENABLED
     NETWORK_URL="${NETWORK_URL}"
     NETWORK_AUTH_KEY="${NETWORK_AUTH_KEY}"
     CLIENT_VERSION="${PROJECT_VERSION}"
@@ -207,6 +241,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE sndfile samplerate)
 if(NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
   target_link_libraries(${PROJECT_NAME} PRIVATE rtaudio)
 endif()
+if(NOT EMSCRIPTEN)
+  target_link_libraries(${PROJECT_NAME} PRIVATE libremidi::libremidi)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE portaudio)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE g719)
@@ -221,10 +258,6 @@ if(SUPPORT_FUMEN)
 endif()
 
 include(cmake/platform.cmake)
-option(YATAIDON_BUILD_NETWORK_TESTS "Build isolated Simulator network integration checks" OFF)
-if(YATAIDON_BUILD_NETWORK_TESTS)
-  add_subdirectory(tests/network)
-endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -244,6 +277,7 @@ message(STATUS "Project: ${PROJECT_NAME}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "Network: ${NETWORK_ENABLED}")
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT WIN32 AND NOT ANDROID AND NOT IOS)
   message(STATUS "Sanitizers: AddressSanitizer, LeakSanitizer, UndefinedBehaviorSanitizer")
 endif()

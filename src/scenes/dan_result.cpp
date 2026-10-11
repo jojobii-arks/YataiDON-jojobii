@@ -52,8 +52,8 @@ void DanResultScreen::on_screen_start() {
             chara->set_don_colors(pd->chara_color_1, pd->chara_color_2, pd->chara_color_3);
             chara->apply_face(pd->chara_face_index);
         } else {
-            chara->set_don_colors(chara_default_color_1(get_player_id(global_data.player_num)),
-                                  chara_default_color_2(get_player_id(global_data.player_num)),
+            chara->set_don_colors(chara_default_color_1(global_data.player_num),
+                                  chara_default_color_2(global_data.player_num),
                                   {249, 240, 225, 255});
         }
         chara->set_anim(AnimIndex::DON_NORMAL);
@@ -101,7 +101,7 @@ void DanResultScreen::apply_reward() {
     if (rd.odai_result < 0) return;               // legacy record — no verdict
     if (rd.skipped) return;                       // skipped out: the cabinet records nothing
 
-    const int pid = get_player_id(global_data.player_num);
+    const std::string pid = get_player_id(global_data.player_num);
     auto prev = scores_manager.get_dan_record(pid, rd.dan_title);
     prev_best = prev ? prev->rank : 0;
     prev_best_score = prev ? prev->score : 0;

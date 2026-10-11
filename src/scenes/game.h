@@ -13,6 +13,8 @@ class GameScreen : public Screen {
 protected:
     GameScreen(const std::string& name) : Screen(name) {}
 
+    void update_gameplay(double current_ms);
+
 public:
     GameScreen() : Screen("game") {
     }
@@ -22,6 +24,10 @@ public:
     double ms_from_start;
     double start_delay;
     double last_resync_ms;
+    double resync_drift_ema = 0.0;   // smoothed audio - chart drift (resync_song)
+    double resync_rate_bias = 0.0;   // learned audio clock rate offset (resync_song)
+    double resync_chart_ms = 0.0;    // chart time after the previous resync_song
+    double refresh_period_ms = 0.0;  // display refresh period, 0 = unknown (resync_song)
     bool song_started;
     bool paused;
     bool score_saved;
@@ -36,6 +42,7 @@ public:
     SongInfo song_info;
     std::optional<Transition> transition;
     ResultTransition result_transition;
+    static constexpr double kFastResultTransitionDelayMs = 3000.0;
     AllNetIcon allnet_indicator;
     std::optional<Background> background;
 
@@ -55,6 +62,7 @@ public:
     void start_song(double ms_from_start);
 
     void poll_pending_song();
+    void set_players_audio_end();
 
     void restart_song();
 
@@ -82,7 +90,7 @@ public:
 
     void update_background(double current_ms);
 
-    void save_score(int player_id, PlayerNum player_num);
+    void save_score(const std::string& player_id, PlayerNum player_num);
 
     std::optional<Screens> update() override;
 
@@ -93,5 +101,6 @@ public:
     void draw() override;
 
 private:
+    float paused_audio_time = 0.0f;
     std::future<std::string> pending_song_load;
 };

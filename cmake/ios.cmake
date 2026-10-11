@@ -1,5 +1,5 @@
 enable_language(OBJCXX)
-target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/ios.mm")
+target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/platform_ios.mm")
 # Apple's Mach-O headers define PLATFORM_IOS even in macOS builds.
 target_compile_definitions(${PROJECT_NAME} PRIVATE YATAIDON_PLATFORM_IOS)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3-static
@@ -13,7 +13,7 @@ target_link_options(${PROJECT_NAME} PRIVATE -ObjC)
 set(IOS_BUNDLE_IDENTIFIER "com.yataidon.app" CACHE STRING "iOS application bundle identifier")
 set(IOS_DEVELOPMENT_TEAM "" CACHE STRING "Apple development team for signing")
 set_target_properties(${PROJECT_NAME} PROPERTIES
-  OBJCXX_STANDARD 20
+  OBJCXX_STANDARD 23
   OBJCXX_STANDARD_REQUIRED YES
   MACOSX_BUNDLE TRUE
   MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/ios/Info.plist.in"

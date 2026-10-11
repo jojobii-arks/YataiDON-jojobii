@@ -1,3 +1,4 @@
+#include "../libs/text.h"
 #include "game_2p.h"
 #include "../libs/animation.h"
 #include "../libs/input.h"
@@ -15,8 +16,8 @@ void Game2PScreen::init_tja(fs::path song) {
     auto& titles = parser->metadata.title;
     auto& subtitles = parser->metadata.subtitle;
     const std::string& lang = global_data.config->general.language;
-    std::string title = titles.count(lang) ? titles.at(lang) : titles.count("en") ? titles.at("en") : titles.empty() ? "" : titles.begin()->second;
-    std::string subtitle = subtitles.count(lang) ? subtitles.at(lang) : "";
+    std::string title = localized_text(titles, lang, LocalizedTextFallback::ENGLISH_OR_FIRST);
+    std::string subtitle = localized_text(subtitles, lang, LocalizedTextFallback::NONE);
 
     global_data.session_data[(int)PlayerNum::P1].song_title = title;
     global_data.session_data[(int)PlayerNum::P1].song_subtitle = subtitle;
@@ -40,6 +41,7 @@ void Game2PScreen::init_tja(fs::path song) {
 
     players[0]->kusudama_partner = players[1].get();
     players[1]->kusudama_partner = players[0].get();
+    set_players_audio_end();
 
     start_ms = get_current_ms() - parser->metadata.offset * 1000 - (double)global_data.config->general.audio_offset;
 }
@@ -54,19 +56,7 @@ std::optional<Screens> Game2PScreen::update() {
     if (!paused) {
         ms_from_start = current_time - start_ms;
     }
-    poll_pending_song();
-    if (transition->is_finished()) {
-        start_song(ms_from_start);
-        reset_input_lock();
-    }
-    resync_song(current_time);
-
-    update_background(current_time);
-
-    for (auto& p : players) {
-        p->update(ms_from_start, current_time, background);
-    }
-    song_info.update(current_time);
+    update_gameplay(current_time);
     result_transition.update(current_time);
 
     if (result_transition.is_finished && !audio.is_sound_playing("result_transition")) {
@@ -85,7 +75,9 @@ std::optional<Screens> Game2PScreen::update() {
             global_data.songs_played += 1;
             score_saved = true;
         }
-        if (ms_from_start >= end_time + 8533.34) {
+        const double transition_delay = global_data.config->general.fast_transitions
+            ? kFastResultTransitionDelayMs : 8533.34;
+        if (ms_from_start >= end_time + transition_delay) {
             if (!result_transition.is_started) {
                 result_transition.start();
                 audio.play_sound("result_transition", VolumePreset::VOICE);

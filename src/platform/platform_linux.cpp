@@ -1,4 +1,7 @@
 #include "platform_linux.h"
+#include "../libs/ray.h"
+#include <SDL3/SDL_video.h>
+#include <dlfcn.h>
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -17,8 +20,6 @@
 #if !defined(__ANDROID__) && !defined(YATAIDON_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
 #include <cpptrace/cpptrace.hpp>
 #endif
-
-#include <SDL3/SDL.h>
 
 namespace {
 
@@ -86,6 +87,21 @@ std::filesystem::path unix_get_executable_dir() {
     return std::filesystem::path(buffer).parent_path();
 }
 
+void unix_close_window() {
+    // SDL unloads EGL before disconnecting Wayland; queued NVIDIA events still
+    // reference this module's protocol metadata, so keep it loaded until then.
+    void* egl_wayland = nullptr;
+    const char* driver = SDL_GetCurrentVideoDriver();
+
+    if (driver && std::strcmp(driver, "wayland") == 0) {
+        egl_wayland = dlopen("libnvidia-egl-wayland.so.1", RTLD_LAZY | RTLD_NOLOAD);
+    }
+
+    ray::CloseWindow();
+
+    if (egl_wayland) dlclose(egl_wayland);
+}
+
 void unix_install_crash_handlers() {
     // Run the crash handler on its own stack so a stack-overflow SIGSEGV
     // (where the normal stack is exhausted) still gets caught. On modern
@@ -115,32 +131,4 @@ void unix_install_crash_handlers() {
     sa_int.sa_handler = signal_handler;
     sigemptyset(&sa_int.sa_mask);
     if (sigaction(SIGINT, &sa_int, nullptr) != 0) spdlog::warn("sigaction(SIGINT) failed: {}", strerror(errno));
-}
-
-bool linux_handle_text_input(void* event, bool input_locked,
-                              std::mutex& input_mutex,
-                              std::unordered_multiset<int>& pressed_keys,
-                              std::unordered_multiset<int>& released_keys) {
-    if (input_locked) return false;
-
-    SDL_Event* sdl_event = static_cast<SDL_Event*>(event);
-    if (sdl_event->type == SDL_EVENT_TEXT_INPUT && sdl_event->text.text) {
-        const bool* key_state = SDL_GetKeyboardState(nullptr);
-        std::lock_guard<std::mutex> lock(input_mutex);
-        for (const char* p = sdl_event->text.text; *p; p++) {
-            unsigned char c = (unsigned char)*p;
-            int key = 0;
-            if (c >= 'a' && c <= 'z') key = c - 32;
-            else if (c >= 32 && c <= 96) key = c;
-            if (!key) continue;
-            SDL_Keycode keycode = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
-            SDL_Keymod mod = SDL_KMOD_NONE;
-            SDL_Scancode sc = SDL_GetScancodeFromKey(keycode, &mod);
-            if (sc != SDL_SCANCODE_UNKNOWN && key_state && key_state[sc]) continue;
-            pressed_keys.insert(key);
-            released_keys.insert(key);
-        }
-        return true;
-    }
-    return false;
 }

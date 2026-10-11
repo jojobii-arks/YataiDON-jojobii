@@ -173,8 +173,9 @@ IOS_BUNDLE_IDENTIFIER=com.yourname.yataidon \
 Without both values, the offline implementation is built. In the installed app's
 Documents `config.toml`, set `[network] online_play = true` to enable requests;
 set `sync_scores = true` if you also want startup score downloads, then restart.
-Leave `access_code` empty for first-time registration, or use your own existing
-code. Existing configurations are preserved on upgrade, so rebuilding alone does
+Leave `access_code_1` and `access_code_2` empty for first-time registration, or use your own existing
+codes. Existing configurations are preserved on upgrade (old `access_code` and
+`player_1_id`/`player_2_id` are migrated automatically), so rebuilding alone does
 not turn these switches on. Local gameplay/saves remain available offline.
 
 The [network integration checks](../tests/network/README.md) exercise the actual

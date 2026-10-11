@@ -86,15 +86,16 @@ elseif(EMSCRIPTEN)
   elseif(TARGET SDL3::SDL3)
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
   endif()
+  # catch blocks are dead code on wasm unless compiled with -fexceptions too
+  target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions)
   target_link_options(${PROJECT_NAME} PRIVATE
     -sUSE_SDL=3
     -sMAX_WEBGL_VERSION=2
     -sALLOW_MEMORY_GROWTH=1
+    -sPTHREAD_POOL_SIZE=32
     -sINITIAL_MEMORY=134217728
     -sASSERTIONS=1
     -sNO_DISABLE_EXCEPTION_CATCHING
-    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/config.toml@/dev-config.toml"
-    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/config.toml@/config.toml"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/shader@/shader"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/Songs@/Songs"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/Skins/PyTaikoGreen@/Skins/PyTaikoGreen"
@@ -145,13 +146,13 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -g
             -fmax-errors=0
             -fsanitize=address
-            -fsanitize=leak
+            $<$<NOT:$<PLATFORM_ID:Darwin>>:-fsanitize=leak>
             -fsanitize=undefined
             -fno-omit-frame-pointer
         )
     target_link_options(${PROJECT_NAME} PRIVATE
             -fsanitize=address
-            -fsanitize=leak
+            $<$<NOT:$<PLATFORM_ID:Darwin>>:-fsanitize=leak>
             -fsanitize=undefined
         )
     message(STATUS "AddressSanitizer enabled for Debug build")

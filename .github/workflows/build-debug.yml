@@ -96,7 +96,6 @@ jobs:
           cp -r Skins release/YataiDON-Linux/
           cp -r shader release/YataiDON-Linux/
           cp -r Songs release/YataiDON-Linux/
-          cp config.toml release/YataiDON-Linux/
           chmod +x release/YataiDON-Linux/YataiDON
 
           # Bundle FFmpeg shared libraries into lib/
@@ -155,6 +154,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cppwinrt
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkg-config
@@ -187,7 +187,6 @@ jobs:
           cp -r Skins release/YataiDON-Windows/
           cp -r shader release/YataiDON-Windows/
           cp -r Songs release/YataiDON-Windows/
-          cp config.toml release/YataiDON-Windows/
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
@@ -252,7 +251,6 @@ jobs:
           cp -r Skins release/YataiDON-macOS/
           cp -r shader release/YataiDON-macOS/
           cp -r Songs release/YataiDON-macOS/
-          cp config.toml release/YataiDON-macOS/
           chmod +x release/YataiDON-macOS/YataiDON
 
       - name: Upload macOS package

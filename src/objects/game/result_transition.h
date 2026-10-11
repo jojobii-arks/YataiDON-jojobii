@@ -6,26 +6,9 @@
 
 class ResultTransition : public LuaScript {
 private:
-    PlayerNum player_num = PlayerNum::P1;
     MoveAnimation* move = nullptr;
 
     sol::protected_function fn_start, fn_update, fn_draw, fn_is_finished;
-
-    void draw_default();
-
-    // Resolved once in the constructor (player_num is fixed for this object's
-    // lifetime) instead of doing string-keyed texture lookups every frame.
-    bool has_footer = false;
-    float tex_height = 0.0f;
-    float tex_height_2p = 0.0f;
-    float shutter_width = 0.0f;
-    TextureObject* t_shutter_1p = nullptr;
-    TextureObject* t_shutter_2p = nullptr;
-    TextureObject* t_footer_1p = nullptr;
-    TextureObject* t_footer_2p = nullptr;
-    TextureObject* t_shutter_player = nullptr;
-    TextureObject* t_footer_player = nullptr;
-    void init_textures();
 
 public:
     bool is_finished = false;

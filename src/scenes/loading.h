@@ -22,10 +22,24 @@ private:
 
     TextureObject* t_warning = nullptr;
 
+    // skin_config "loading_countdown": x = centre, y = top, width = digit pitch, height = seconds
+    // (0 = none). The screen stays at least that long; kidou/countdown frames 0-9 are the digits,
+    // frame 10 the separator, drawn as S"CC (seconds, hundredths) counting down.
+    TextureObject* t_countdown = nullptr;
+    double countdown_ms = 0.0;
+    double start_ms = 0.0;
+    // a don (1P / 2P: F J / X C by default) skips the rest of the countdown; the song scan still
+    // has to finish, so a press during it is kept until then
+    bool skip_requested = false;
+
     std::thread loading_thread;
 
     std::unique_ptr<FadeAnimation> fade_in;
-    AllNetIcon allnet_indicator;
+    std::optional<AllNetIcon> allnet_indicator;
+
+    bool skin_reloaded = false;
+
+    void init_visuals();
 
     void load_song_hashes();
 

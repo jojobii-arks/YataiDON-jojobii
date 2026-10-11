@@ -23,7 +23,9 @@ BaseBox::BaseBox(const fs::path& path, const BoxDef& box_def)
     move = std::make_unique<MoveAnimation>(133, 0, false, false, 0, 0.0, std::nullopt, std::nullopt, EaseType::Cubic);
     move->start();
 
-    load_textures();
+    yellow_right_width  = tex.get_texture("yellow_box/yellow_box_right")->width;
+    folder_texture_left_width  = tex.get_texture("box/folder_texture_left")->width;
+    folder_texture_right_width = tex.get_texture("box/folder_texture_right")->width;
 
     fade_in(100);
 }
@@ -62,47 +64,36 @@ void BaseBox::load_text() {
 }
 
 void BaseBox::reset() {
-    yellow_box.reset();
+    yellow_box_active = false;
     yellow_box_opened = false;
+    is_diff_select = false;
     open_anim->reset();
     open_fade->reset();
-    load_textures();
-}
-
-void BaseBox::load_textures() {
-    t_shadow_bottom_left  = tex.get_texture("yellow_box/shadow_bottom_left");
-    t_shadow_bottom       = tex.get_texture("yellow_box/shadow_bottom");
-    t_shadow_bottom_right = tex.get_texture("yellow_box/shadow_bottom_right");
-    t_shadow_right        = tex.get_texture("yellow_box/shadow_right");
-    t_shadow_top_right    = tex.get_texture("yellow_box/shadow_top_right");
-    t_folder_texture_left  = tex.get_texture("box/folder_texture_left");
-    t_folder_texture       = tex.get_texture("box/folder_texture");
-    t_folder_texture_right = tex.get_texture("box/folder_texture_right");
-    t_genre_overlay = tex.get_texture("box/genre_overlay");
-    t_diff_overlay  = tex.get_texture("box/diff_overlay");
 }
 
 void BaseBox::expand_box() {
-    yellow_box.emplace();
+    yellow_box_active = true;
     yellow_box_opened = false;
+    is_diff_select = false;
     open_anim->start();
     bar_open_started_at = get_current_ms();
 }
 
 void BaseBox::close_box() {
-    yellow_box.reset();
+    yellow_box_active = false;
     yellow_box_opened = false;
+    is_diff_select = false;
 }
 
 void BaseBox::enter_box() {
-    if (!yellow_box.has_value()) return;
-    yellow_box->create_anim_2();
+    if (!yellow_box_active) return;
+    is_diff_select = true;
 }
 
 void BaseBox::exit_box() {
-    yellow_box.reset();
-    yellow_box.emplace();
-    yellow_box->create_anim();
+    yellow_box_active = true;
+    yellow_box_opened = false;
+    is_diff_select = false;
     open_fade->start();
 }
 
@@ -111,11 +102,11 @@ void BaseBox::set_position(float target_position) {
     this->target_position = position;
 }
 
-void BaseBox::move_box(float target_position, float duration) {
+void BaseBox::move_box(float target_position, float duration, float delay, std::optional<EaseType> ease) {
     this->target_position = target_position;
     float delta = target_position - position;
     move_delta = delta;
-    move = std::make_unique<MoveAnimation>(duration, delta, false, false, 0, 0.0, std::nullopt, std::nullopt, EaseType::Cubic);
+    move = std::make_unique<MoveAnimation>(duration, delta, false, false, 0, delay, std::nullopt, std::nullopt, ease);
     move->start();
 }
 
@@ -146,69 +137,24 @@ void BaseBox::update(double current_time) {
         position = target_position;
         cross_pos = cross_target;
         cross_lead = 0.0f;
-        if (yellow_box.has_value() && !yellow_box_opened) {
-            yellow_box->create_anim();
+        if (yellow_box_active && !yellow_box_opened) {
             yellow_box_opened = true;
             open_fade->start();
         }
     }
-    if (yellow_box.has_value()) {
-        yellow_box->update(current_time);
-        left_bound = position + yellow_box->left_distance;
-        right_bound = yellow_box->right_distance;
+    if (yellow_box_active) {
+        // The Lua skin advances the shared yellow-box animations; read their current
+        // attributes to derive the box bounds the navigator uses for the inline-list bg.
+        auto yb = [](int id) { return (MoveAnimation*)tex.get_animation(id); };
+        if (is_diff_select) {
+            left_bound = position + (yb(13)->attribute - yb(13)->start_position);
+            right_bound = yb(14)->attribute - yb(14)->start_position;
+        } else {
+            left_bound = position + (yb(9)->attribute - yb(9)->start_position);
+            right_bound = yb(10)->attribute + yellow_right_width;
+        }
     } else {
         left_bound = position;
-        right_bound = position + (float)(t_folder_texture_left->width) + (float)(t_folder_texture_right->width) + (tex.skin_config[SC::SONG_BOX_BG].width);
-    }
-}
-
-void BaseBox::draw_closed() {
-    float bx = box_x();
-    float by = box_y();
-
-    tex.draw_texture(t_shadow_bottom_left,  {.x=bx, .y=by, .fade=fade->attribute, .index=0});
-    tex.draw_texture(t_shadow_bottom,       {.x=bx, .y=by, .fade=fade->attribute, .index=0});
-    tex.draw_texture(t_shadow_bottom_right, {.x=bx, .y=by, .fade=fade->attribute, .index=0});
-    tex.draw_texture(t_shadow_right,        {.x=bx, .y=by, .fade=fade->attribute, .index=0});
-    tex.draw_texture(t_shadow_top_right,    {.x=bx, .y=by, .fade=fade->attribute, .index=0});
-
-    if (shader_loaded && texture_index == TextureIndex::NONE)
-        ray::BeginShaderMode(shader);
-
-    tex.draw_texture(t_folder_texture_left,  {.frame=(int)texture_index, .x=bx, .y=by, .fade=fade->attribute});
-    tex.draw_texture(t_folder_texture,       {.frame=(int)texture_index, .x=bx, .y=by, .x2=tex.skin_config[SC::SONG_BOX_BG].width, .fade=fade->attribute});
-    tex.draw_texture(t_folder_texture_right, {.frame=(int)texture_index, .x=bx, .y=by, .fade=fade->attribute});
-
-    if (shader_loaded && texture_index == TextureIndex::NONE)
-        ray::EndShaderMode();
-
-    if (texture_index == TextureIndex::DEFAULT)
-        tex.draw_texture(t_genre_overlay, {.x=bx, .y=by, .fade=fade->attribute});
-    if (genre_index == GenreIndex::DIFFICULTY)
-        tex.draw_texture(t_diff_overlay,  {.x=bx, .y=by, .fade=fade->attribute});
-    if (genre_index == GenreIndex::TIER)
-        tex.draw_texture(t_diff_overlay,  {.x=bx, .y=by, .fade=fade->attribute});
-}
-
-void BaseBox::draw_open() {
-    if (yellow_box.has_value()) {
-        yellow_box->draw(1.0f, box_y());
-    }
-}
-
-void BaseBox::draw_diff_select() {
-    if (yellow_box.has_value())
-        yellow_box->draw();
-}
-
-void BaseBox::draw()
-{
-    std::string_view state = draw_state();
-    if (state == "diff_select") {
-        draw_diff_select();
-    } else if (state == "open") {
-        draw_open();
-    } else {
-        draw_closed();
+        right_bound = position + folder_texture_left_width + folder_texture_right_width + (tex.skin_config[SC::SONG_BOX_BG].width);
     }
 }

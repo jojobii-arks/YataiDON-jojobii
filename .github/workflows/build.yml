@@ -105,7 +105,6 @@ jobs:
           cp -r Skins release/YataiDON-Linux/
           cp -r shader release/YataiDON-Linux/
           cp -r Songs release/YataiDON-Linux/
-          cp config.toml release/YataiDON-Linux/
           cp update.sh release/YataiDON-Linux/
           chmod +x release/YataiDON-Linux/YataiDON release/YataiDON-Linux/update.sh
 
@@ -149,6 +148,7 @@ jobs:
         with:
           name: YataiDON-Linux
           path: release/YataiDON-Linux/
+          include-hidden-files: true
           if-no-files-found: error
 
   build-windows:
@@ -200,6 +200,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cppwinrt
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkg-config
@@ -209,6 +210,7 @@ jobs:
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-sdl3
             mingw-w64-x86_64-libidn2
+            mingw-w64-x86_64-opus
             git
             make
 
@@ -234,7 +236,6 @@ jobs:
           cp -r Skins release/YataiDON-Windows/
           cp -r shader release/YataiDON-Windows/
           cp -r Songs release/YataiDON-Windows/
-          cp config.toml release/YataiDON-Windows/
           cp update.ps1 update.bat release/YataiDON-Windows/
 
           # Checksums — binary + updater + dlls + shader
@@ -249,6 +250,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YataiDON-Windows
+          include-hidden-files: true
           path: release/YataiDON-Windows/
           if-no-files-found: error
 
@@ -330,7 +332,6 @@ jobs:
           cp -r Skins release/YataiDON-macOS/
           cp -r shader release/YataiDON-macOS/
           cp -r Songs release/YataiDON-macOS/
-          cp config.toml release/YataiDON-macOS/
           cp update.sh release/YataiDON-macOS/
           chmod +x release/YataiDON-macOS/YataiDON release/YataiDON-macOS/update.sh
 
@@ -353,6 +354,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YataiDON-macOS
+          include-hidden-files: true
           path: release/YataiDON-macOS/
           if-no-files-found: error
 
@@ -397,11 +399,11 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Install NDK r27d and CMake 3.22.1
+      - name: Install NDK r27d and CMake 3.31.6
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | $SDKMANAGER --licenses >/dev/null 2>&1 || true
-          $SDKMANAGER "ndk;27.3.13750724" "cmake;3.22.1"
+          $SDKMANAGER "ndk;27.3.13750724" "cmake;3.31.6"
 
       - name: Cache FFmpeg for Android arm64
         id: cache-ffmpeg
@@ -431,7 +433,7 @@ jobs:
       - name: Write local.properties
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-          echo "cmake.dir=$ANDROID_SDK_ROOT/cmake/3.22.1" >> android/local.properties
+          echo "cmake.dir=$ANDROID_SDK_ROOT/cmake/3.31.6" >> android/local.properties
 
       - name: Decode keystore
         run: |
@@ -453,6 +455,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YataiDON-Android
+          include-hidden-files: true
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
@@ -467,6 +470,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YataiDON-Android-Update
+          include-hidden-files: true
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
@@ -571,6 +575,7 @@ jobs:
             release/YataiDON-iOS-unsigned.ipa
             release/checksums-ios.sha256
           compression-level: 0
+          include-hidden-files: true
           if-no-files-found: error
 
   build-summary:

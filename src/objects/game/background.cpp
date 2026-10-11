@@ -44,6 +44,7 @@ Background::Background(PlayerNum player_num, float bpm, const std::string& scene
         fn_handle_bad    = lua_object["handle_bad"];
         fn_handle_drumroll = lua_object["handle_drumroll"];
         fn_handle_balloon  = lua_object["handle_balloon"];
+        fn_handle_kusudama = lua_object["handle_kusudama"];
         fn_handle_gauge  = lua_object["handle_gauge"];
         fn_handle_song_end = lua_object["handle_song_end"];
         fn_handle_dan      = lua_object["handle_dan"];
@@ -54,6 +55,9 @@ Background::Background(PlayerNum player_num, float bpm, const std::string& scene
         fn_draw_back     = lua_object["draw_back"];
         fn_draw_fore     = lua_object["draw_fore"];
         fn_draw_gauge    = lua_object["draw_gauge"];
+        fn_handle_balloon_end = lua_object["handle_balloon_end"];
+        fn_handle_gogo   = lua_object["handle_gogo"];
+        fn_handle_miss_streak = lua_object["handle_miss_streak"];
     }
 }
 
@@ -114,12 +118,22 @@ void Background::handle_drumroll(PlayerNum player_num) {
     }
 }
 
-void Background::handle_balloon(PlayerNum player_num) {
+void Background::handle_balloon(PlayerNum player_num, int remaining) {
     if (!fn_handle_balloon.valid()) return;
-    auto result = fn_handle_balloon(lua_object, static_cast<int>(player_num));
+    auto result = fn_handle_balloon(lua_object, static_cast<int>(player_num), remaining);
     if (!result.valid()) {
         sol::error err = result;
         spdlog::error("Error calling handle_balloon: {}", err.what());
+    }
+}
+
+// A kusudama hit: skins without handle_kusudama get handle_balloon, as before.
+void Background::handle_kusudama(PlayerNum player_num) {
+    if (!fn_handle_kusudama.valid()) { handle_balloon(player_num); return; }
+    auto result = fn_handle_kusudama(lua_object, static_cast<int>(player_num));
+    if (!result.valid()) {
+        sol::error err = result;
+        spdlog::error("Error calling handle_kusudama: {}", err.what());
     }
 }
 
@@ -179,6 +193,15 @@ void Background::draw_ending(PlayerNum player_num) {
     }
 }
 
+void Background::handle_balloon_end(PlayerNum player_num) {
+    if (!fn_handle_balloon_end.valid()) return;
+    auto result = fn_handle_balloon_end(lua_object, static_cast<int>(player_num));
+    if (!result.valid()) {
+        sol::error err = result;
+        spdlog::error("Error calling handle_balloon_end: {}", err.what());
+    }
+}
+
 void Background::handle_skip(PlayerNum player_num, const sol::table& state) {
     if (!fn_handle_skip.valid()) return;
     auto result = fn_handle_skip(lua_object, static_cast<int>(player_num), state);
@@ -212,5 +235,23 @@ void Background::draw_gauge(PlayerNum player_num) {
     if (!result.valid()) {
         sol::error err = result;
         spdlog::error("Error calling draw_gauge: {}", err.what());
+    }
+}
+
+void Background::handle_miss_streak(PlayerNum player_num, bool on) {
+    if (!fn_handle_miss_streak.valid()) return;
+    auto result = fn_handle_miss_streak(lua_object, static_cast<int>(player_num), on);
+    if (!result.valid()) {
+        sol::error err = result;
+        spdlog::error("Error calling handle_miss_streak: {}", err.what());
+    }
+}
+
+void Background::handle_gogo(PlayerNum player_num, bool on) {
+    if (!fn_handle_gogo.valid()) return;
+    auto result = fn_handle_gogo(lua_object, static_cast<int>(player_num), on);
+    if (!result.valid()) {
+        sol::error err = result;
+        spdlog::error("Error calling handle_gogo: {}", err.what());
     }
 }

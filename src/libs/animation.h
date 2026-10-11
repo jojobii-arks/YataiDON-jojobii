@@ -53,6 +53,7 @@ public:
     virtual void restart();
 
     void start();
+    void unlock_input();
 
     void pause();
 

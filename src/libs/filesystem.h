@@ -32,7 +32,13 @@ void write_song_list(const fs::path& path, const std::vector<SongListEntry>& ent
 
 fs::path resolve_parent_graphics_path(const fs::path& graphics_path);
 
+// the skin's Graphics path followed by each ancestor's ("screen.parent", followed up to 8 deep)
+std::vector<fs::path> resolve_skin_chain(const fs::path& graphics_path);
+
 void set_skin_graphics_path(const fs::path& graphics_path);
+
+// skin roots of every ancestor of the current skin, nearest first (empty without a parent)
+std::vector<fs::path> skin_ancestor_roots();
 
 bool skin_has_parent();
 

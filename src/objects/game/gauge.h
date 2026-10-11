@@ -6,15 +6,13 @@
 #include "../../libs/animation.h"
 
 #include "../../libs/texture.h"
+#include "../../libs/script.h"
 
-class Gauge {
+class Gauge : public LuaScript {
 public:
 
     Gauge(int total_notes, int difficulty, int level, PlayerNum player_num);
-    // Dan course gauge: one bar across the whole course, no clear zone, drawn from
-    // game/gauge_dan at the positions its texture.json gives (not relative to a lane).
-    // Rates come from one effective row for the course: the harmonic mean of the songs
-    // soul percentages, ok/bad averaged. total_notes is the combined count of all songs.
+
     static Gauge dan(const std::vector<DanSongEntry>& songs, int total_notes, PlayerNum player_num);
 
     void add_good();
@@ -33,7 +31,8 @@ public:
     int get_percent() const { return (int)std::floor((points + POINTS_EPS) / max_points * 100.0); }
 
 private:
-    void draw_dan();
+    bool lua_tried = false;
+    sol::protected_function fn_draw;
     void apply_points_clamped(double delta);
     bool dan_mode = false;
     double good_points;
@@ -56,38 +55,6 @@ private:
     int difficulty;
     double previous_points = 0;
     static constexpr float max_length = 100.0f;
-
-    // Textures resolved once in the constructor (string_diff/player_num never change
-    // after construction) instead of calling tex.get_texture() every frame from draw().
-    // clear_/clear_dark_ (language-suffixed) stay inline: language can change at runtime.
-    TextureObject* t_border = nullptr;
-    TextureObject* t_unfilled = nullptr;
-    TextureObject* t_bar = nullptr;
-    TextureObject* t_bar_clear_transition = nullptr;
-    TextureObject* t_bar_clear_top = nullptr;
-    TextureObject* t_bar_clear_bottom = nullptr;
-    TextureObject* t_rainbow = nullptr;
-    TextureObject* t_bar_clear_transition_fade = nullptr;
-    TextureObject* t_bar_clear_fade = nullptr;
-    TextureObject* t_bar_fade = nullptr;
-    TextureObject* t_overlay = nullptr;
-    TextureObject* t_tamashii_fire = nullptr;
-    TextureObject* t_tamashii = nullptr;
-    TextureObject* t_tamashii_overlay = nullptr;
-    TextureObject* t_tamashii_dark = nullptr;
-
-    TextureObject* t_dan_bar = nullptr;
-    TextureObject* t_dan_bar_fade = nullptr;
-    TextureObject* t_dan_border = nullptr;
-    TextureObject* t_dan_unfilled = nullptr;
-    TextureObject* t_dan_rainbow = nullptr;
-    TextureObject* t_dan_overlay = nullptr;
-    TextureObject* t_dan_tamashii_fire = nullptr;
-    TextureObject* t_dan_tamashii = nullptr;
-    TextureObject* t_dan_tamashii_overlay = nullptr;
-    TextureObject* t_dan_tamashii_dark = nullptr;
-    TextureObject* t_clear = nullptr;
-    TextureObject* t_clear_dark = nullptr;
 
     struct GaugeTable {
         double soul_percent;

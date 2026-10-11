@@ -243,32 +243,19 @@ bool StrOptionBox::needs_text_input() const {
 void StrOptionBox::update(double current_time) {
     flicker_fade->update(current_time);
     if (is_highlighted && value_list.empty()) {
-        if (ray::IsKeyPressed(ray::KEY_BACKSPACE) && !input_string.empty()) {
-            input_string.pop_back();
-            rebuild_text();
-        } else if (ray::IsKeyPressed(ray::KEY_ENTER)
+        std::string before = input_string;
+        TextEditAction action = poll_text_edit(input_string);
 #if defined(PLATFORM_ANDROID) || defined(YATAIDON_PLATFORM_IOS)
-                   || is_l_don_pressed() || is_r_don_pressed()
+        if (action == TextEditAction::None && (is_l_don_pressed() || is_r_don_pressed()))
+            action = TextEditAction::Confirm;
 #endif
-        ) {
+        if (action == TextEditAction::Confirm) {
             value = input_string;
             confirm();
             is_highlighted = false;
-            android_set_keyboard_visible(false);
-        } else if (ray::IsKeyPressed(ray::KEY_V) && ray::IsKeyDown(ray::KEY_LEFT_CONTROL)) {
-            input_string += ray::GetClipboardText();
-            rebuild_text();
+            set_keyboard_visible(false);
         }
-        int key = ray::GetCharPressed();
-        if (key == '\n' || key == '\r') {
-            value = input_string;
-            confirm();
-            is_highlighted = false;
-            android_set_keyboard_visible(false);
-        } else if (key > 0) {
-            input_string += static_cast<char>(key);
-            rebuild_text();
-        }
+        if (input_string != before) rebuild_text();
     }
 }
 

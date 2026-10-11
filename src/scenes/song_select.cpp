@@ -121,6 +121,7 @@ void SongSelectScreen::handle_input_search() {
     search_box->current_search = player->search_string;
     if (result) {
         search_box.reset();
+        set_keyboard_visible(false);
         state = SongSelectState::BROWSING;
         // Enter on an empty (or blank) query just closes the box: there is nothing to
         // search for, so do not open the search folder.
@@ -133,8 +134,7 @@ void SongSelectScreen::handle_input_search() {
 
 void SongSelectScreen::poll_song_jump(double current_ms) {
     static constexpr double SONG_JUMP_POLL_INTERVAL_MS = 3000.0;
-    const std::string& access_code = global_data.config->network.access_code;
-
+    const std::string& access_code = global_data.config->network.access_code_1;
     if (!access_code.empty() && state == SongSelectState::BROWSING &&
         current_ms - last_song_jump_poll_ms >= SONG_JUMP_POLL_INTERVAL_MS) {
         last_song_jump_poll_ms = current_ms;
@@ -148,8 +148,7 @@ void SongSelectScreen::poll_song_jump(double current_ms) {
 
 std::optional<Screens> SongSelectScreen::poll_replay_jump(double current_ms) {
     static constexpr double REPLAY_JUMP_POLL_INTERVAL_MS = 3000.0;
-    const std::string& access_code = global_data.config->network.access_code;
-
+    const std::string& access_code = global_data.config->network.access_code_1;
     if (!access_code.empty() && state == SongSelectState::BROWSING &&
         current_ms - last_replay_jump_poll_ms >= REPLAY_JUMP_POLL_INTERVAL_MS) {
         last_replay_jump_poll_ms = current_ms;
@@ -206,7 +205,6 @@ std::optional<Screens> SongSelectScreen::poll_second_player_join(double current_
     }
 
     if (!allows_second_player_join()) return std::nullopt;
-    if (!tex.options[SCO::SONGSELECT_2P_JOIN]) return std::nullopt;
     if (global_data.songs_played >= 2) return std::nullopt;
     if (game_transition.has_value() || dan_transition.has_value()) return std::nullopt;
     if (navigator.is_processing || navigator.inline_streaming) return std::nullopt;
@@ -257,14 +255,11 @@ void SongSelectScreen::handle_input(double current_ms) {
     }
 }
 
-std::optional<Screens> SongSelectScreen::update() {
-    Screen::update();
-    SongSelectState prev_state = state;
-    double current_time = get_current_ms();
+void SongSelectScreen::update_selection_ui(double current_time, bool advance_timers) {
     allnet_indicator.update(current_time);
     diff_fade_out->update(current_time);
     script->update(current_time);
-    if (join_request_ms < 0.0) {
+    if (advance_timers) {
         select_timer->update(current_time);
         if (diff_select_timer != nullptr) diff_select_timer->update(current_time);
     }
@@ -278,7 +273,9 @@ std::optional<Screens> SongSelectScreen::update() {
         cached_stats = stats_future.get();
         set_song_select_progress_stats(&cached_stats);
     }
+}
 
+void SongSelectScreen::update_diff_sort(double current_time) {
     if (navigator.diff_sort_ready() && !diff_sort_selector) {
         if (stats_future.valid()) {
             stats_future.wait();
@@ -293,6 +290,21 @@ std::optional<Screens> SongSelectScreen::update() {
         diff_sort_selector->update(current_time);
         apply_sort_window_result();
     }
+}
+
+void SongSelectScreen::start_search() {
+    search_box.emplace();
+    // The don key that opened the search (F/J) is also a typed character still
+    // queued in raylib's char buffer; drop it so it does not land in the query.
+    while (ray::GetCharPressed() > 0) {}
+}
+
+std::optional<Screens> SongSelectScreen::update() {
+    Screen::update();
+    SongSelectState prev_state = state;
+    double current_time = get_current_ms();
+    update_selection_ui(current_time, join_request_ms < 0.0);
+    update_diff_sort(current_time);
 
     if (navigator.tier_sort_ready() && !tier_sort_selector) {
         tier_sort_selector.emplace(navigator.get_tier_statistics(),
@@ -329,7 +341,7 @@ std::optional<Screens> SongSelectScreen::update() {
 
     if (game_transition.has_value() && join_request_ms < 0.0) {
         game_transition->update(current_time);
-        if (game_transition->is_finished()) {
+        if (game_transition->is_finished() && !player->is_voice_playing()) {
             return on_screen_end(get_game_screen_target());
         }
     }
@@ -348,7 +360,7 @@ std::optional<Screens> SongSelectScreen::update() {
     if (state != prev_state) {
         script->restart_text_fade();
         if (prev_state == SongSelectState::SEARCHING)
-            android_set_keyboard_visible(false);
+            set_keyboard_visible(false);
         if (state == SongSelectState::SONG_SELECTED) {
             diff_select_timer = std::make_unique<Timer>(60, current_time, [this]() {
                 if (auto* item = dynamic_cast<SongBox*>(navigator.get_current_item())) {
@@ -356,11 +368,8 @@ std::optional<Screens> SongSelectScreen::update() {
                 }
             });
         } else if (state == SongSelectState::SEARCHING) {
-            search_box.emplace();
-            // The don key that opened the search (F/J) is also a typed character still
-            // queued in raylib's char buffer; drop it so it does not land in the query.
-            while (ray::GetCharPressed() > 0) {}
-            android_set_keyboard_visible(true);
+            start_search();
+            set_keyboard_visible(true);
         } else if (state == SongSelectState::DAN_SELECTED) {
             dan_transition.emplace();
             dan_transition->start();
@@ -371,6 +380,7 @@ std::optional<Screens> SongSelectScreen::update() {
 }
 
 Screens SongSelectScreen::on_screen_end(Screens next_screen) {
+    if (search_box) set_keyboard_visible(false);
     if (stats_future.valid()) stats_future.wait();
     set_song_select_progress_stats(nullptr);
     navigator.join_loader();
@@ -409,8 +419,7 @@ void SongSelectScreen::draw() {
     draw_overlays();
 
     // the personal-best panel gives way to the neiro / option popup, which shares its corner
-    const bool popup_open = !player->option_panel_by_lua &&
-                            (player->neiro_selector.has_value() || player->modifier_selector.has_value());
+    const bool popup_open = (player->neiro_selector.has_value() || player->modifier_selector.has_value());
     if (screen_init && !popup_open) navigator.draw_score_history();
 
     if (diff_sort_selector) diff_sort_selector->draw();

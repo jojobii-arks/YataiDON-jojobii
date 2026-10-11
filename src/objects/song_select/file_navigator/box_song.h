@@ -17,8 +17,6 @@ public:
     SongParser parser;
     bool is_favorite;
     std::string text_subtitle;
-    std::unique_ptr<OutlinedText> subtitle;
-    std::unique_ptr<OutlinedText> name_black;
     std::unique_ptr<OutlinedText> bpm_text;
     std::optional<ray::Texture2D> preimage;
     bool music_playing = false;
@@ -30,6 +28,8 @@ public:
     std::shared_ptr<PreviewLoad> preview_load;
     std::thread preview_thread;
     bool preview_attempted = false;
+    // the preview audio file, checked once on the first update()
+    enum class WaveKind { UNKNOWN, MISSING, BANK, STREAM } wave_kind = WaveKind::UNKNOWN;
     std::unique_ptr<ScoreHistory> score_history;
     double box_opened_at = 0.0;
     FadeAnimation* diff_fade_in;
@@ -125,38 +125,4 @@ public:
 protected:
     std::unique_ptr<OutlinedText> horizontal_subtitle_cache;
     std::unique_ptr<OutlinedText> horizontal_subtitle_large_cache;
-
-    void draw_closed() override;
-    void draw_open() override;
-    void draw_diff_select() override;
-    void load_textures() override;
-    void draw_text();
-    void draw_box_crown(float x, float y, double fade_val);
-    void draw_diff_crown(int diff, float x, float y, double fade_val);
-    void draw_diff_outline(float x, float y, double fade_val);
-    static void draw_difficulty_bar_labels(float offset, float fade_val);
-
-    // Fixed-path textures resolved once in the constructor instead of calling
-    // tex.get_texture() every frame from draw_*(). Language-suffixed paths (which
-    // can change mid-session) and per-song-data paths are left inline.
-    TextureObject* t_preimage_bg = nullptr;
-    TextureObject* t_crown_dfc = nullptr;
-    TextureObject* t_crown_fc = nullptr;
-    TextureObject* t_crown_clear = nullptr;
-    TextureObject* t_s_crown_dfc = nullptr;
-    TextureObject* t_s_crown_fc = nullptr;
-    TextureObject* t_s_crown_clear = nullptr;
-    TextureObject* t_s_crown_outline = nullptr;
-    TextureObject* t_ex_data_new_audio = nullptr;
-    TextureObject* t_ex_data_old_audio = nullptr;
-    TextureObject* t_difficulty_bar = nullptr;
-    TextureObject* t_difficulty_bar_shadow = nullptr;
-    TextureObject* t_star = nullptr;
-    TextureObject* t_star_ura = nullptr;
-    TextureObject* t_branch_indicator = nullptr;
-    TextureObject* t_branch_indicator_ura = nullptr;
-    TextureObject* t_branch_indicator_diff = nullptr;
-    TextureObject* t_diff_tower = nullptr;
-    TextureObject* t_diff_tower_shadow = nullptr;
-    TextureObject* t_ura_oni_plate = nullptr;
 };

@@ -103,6 +103,13 @@ void BaseAnimation::start() {
     restart();
 }
 
+void BaseAnimation::unlock_input() {
+    if (lock_input && !unlocked) {
+        unlocked = true;
+        release_input_lock();
+    }
+}
+
 void BaseAnimation::pause() {
     if (!is_started) return;
     is_started = false;

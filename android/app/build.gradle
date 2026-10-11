@@ -15,7 +15,7 @@ android {
 
     defaultConfig {
         applicationId 'com.yataidon.app'
-        minSdk 29
+        minSdk 31
         targetSdk 35
         versionCode 1
         versionName '1.0'
@@ -30,7 +30,7 @@ android {
                     "-DANDROID_FFMPEG_PREFIX=${rootProject.file('../.android-ffmpeg').absolutePath}",
                     "-DANDROID_OPENSSL_PREFIX=${rootProject.file('../.android-openssl').absolutePath}",
                     "-DANDROID_STL=c++_shared",
-                    "-DANDROID_PLATFORM=android-29",
+                    "-DANDROID_PLATFORM=android-31",
                     "-DNETWORK_URL=${System.getenv('NETWORK_URL') ?: ''}",
                     "-DNETWORK_AUTH_KEY=${System.getenv('NETWORK_AUTH_KEY') ?: ''}"
                 )
@@ -41,7 +41,7 @@ android {
     externalNativeBuild {
         cmake {
             path '../../CMakeLists.txt'
-            version '3.22.1'
+            version '3.31.6'
         }
     }
 
@@ -60,16 +60,7 @@ android {
     task copyGameDataAssets(type: Copy) {
         from(rootProject.file('../Skins')) { into 'Skins' }
         from(rootProject.file('../Songs')) { into 'Songs' }
-        from(rootProject.file('../config.toml')) {
-            filter { String line -> line.replaceFirst(/^(\s*)touch_input(\s*=\s*)false\b/, '$1touch_input$2true') }
-        }
         into gameDataOutDir
-    }
-    copyGameDataAssets.doLast {
-        def patched = new File(gameDataOutDir.get().asFile, 'config.toml').text
-        if (!(patched =~ /(?m)^\s*touch_input\s*=\s*true\s*$/)) {
-            throw new GradleException("config.toml no longer contains an overridable 'touch_input = false' entry; update copyGameDataAssets")
-        }
     }
 
     sourceSets {
@@ -86,6 +77,15 @@ android {
     lint {
         abortOnError false
         checkReleaseBuilds false
+    }
+
+    // The skin updater is driven by hidden ".skin-repo" files that must ship in
+    // the APK assets. aapt2's default ignoreAssetsPattern includes ".*", which
+    // strips ALL dotfiles from the APK — so .skin-repo never reached the device
+    // and skin updates silently never ran. Drop ".*" but keep the VCS/excluded
+    // entries (e.g. .git) so nothing unwanted is packaged.
+    androidResources {
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
 
     compileOptions {

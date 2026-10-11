@@ -186,13 +186,6 @@ std::string ca_bundle_path() {
     return path;
 }
 
-cpr::SslOptions android_ca() {
-    const std::string& path = ca_bundle_path();
-    if (path.empty()) {
-        spdlog::error("No CA bundle available; TLS verification cannot be configured");
-    }
-    return cpr::Ssl(cpr::ssl::CaInfo{path}, cpr::ssl::VerifyPeer{true}, cpr::ssl::VerifyHost{true});
-}
 #define NETWORK_CA_OPT , android_ca()
 
 void install_apk(const std::string& path) {
@@ -223,6 +216,16 @@ void install_apk(const std::string& path) {
 
 }  // namespace
 
+#if defined(__ANDROID__)
+cpr::SslOptions android_ca() {
+    const std::string& path = ca_bundle_path();
+    if (path.empty()) {
+        spdlog::error("No CA bundle available; TLS verification cannot be configured");
+    }
+    return cpr::Ssl(cpr::ssl::CaInfo{path}, cpr::ssl::VerifyPeer{true}, cpr::ssl::VerifyHost{true});
+}
+#endif
+
 static bool network_enabled() {
     return global_data.config && global_data.config->network.online_play;
 }
@@ -244,6 +247,12 @@ bool NetworkClient::probe_online() {
     online = (r.status_code == 200);
     if (!online) spdlog::warn("Network: server unreachable at startup (HTTP {}), skipping profile sync", r.status_code);
     return online;
+}
+
+void NetworkClient::start_probe() {
+    if (!network_enabled()) { online = false; return; }
+    probing_ = true;
+    check_heartbeat();
 }
 
 void NetworkClient::check_heartbeat() {
@@ -397,6 +406,46 @@ bool NetworkClient::fetch_costume(const std::string& access_code, int& head_inde
     return true;
 }
 
+std::optional<RemoteUser> NetworkClient::fetch_user(const std::string& access_code) {
+    if (!network_enabled()) return std::nullopt;
+    cpr::Response response = cpr::Get(
+        cpr::Url{network_url("/user")},
+        signed_headers("GET", "/user", {{"access_code", access_code}}),
+        cpr::Parameters{{"access_code", access_code}},
+        cpr::Timeout{5000}
+        NETWORK_CA_OPT
+    );
+    if (response.status_code != 200) return std::nullopt;
+
+    rapidjson::Document doc;
+    if (doc.Parse(response.text.c_str()).HasParseError() || !doc.IsObject()) return std::nullopt;
+
+    RemoteUser user;
+    if (doc.HasMember("username") && doc["username"].IsString()) user.username = doc["username"].GetString();
+    if (doc.HasMember("title") && doc["title"].IsString()) user.title = doc["title"].GetString();
+    if (doc.HasMember("title_bg") && doc["title_bg"].IsInt()) user.title_bg = doc["title_bg"].GetInt();
+    if (doc.HasMember("chara_color_1") && doc["chara_color_1"].IsString() &&
+        doc.HasMember("chara_color_2") && doc["chara_color_2"].IsString() &&
+        doc.HasMember("chara_color_3") && doc["chara_color_3"].IsString()) {
+        try {
+            user.chara_colors = std::array<ray::Color, 3>{
+                parse_hex_color(doc["chara_color_1"].GetString()),
+                parse_hex_color(doc["chara_color_2"].GetString()),
+                parse_hex_color(doc["chara_color_3"].GetString())};
+        } catch (const std::invalid_argument&) {}
+    }
+    if (doc.HasMember("chara_head_index") && doc["chara_head_index"].IsInt() &&
+        doc.HasMember("chara_body_index") && doc["chara_body_index"].IsInt() &&
+        doc.HasMember("chara_cos_index") && doc["chara_cos_index"].IsInt() &&
+        doc.HasMember("chara_is_costume") && doc["chara_is_costume"].IsBool()) {
+        user.costume = RemoteUser::Costume{doc["chara_head_index"].GetInt(), doc["chara_body_index"].GetInt(),
+                                           doc["chara_cos_index"].GetInt(), doc["chara_is_costume"].GetBool()};
+    }
+    user.import_requested = doc.HasMember("import_requested") && doc["import_requested"].IsBool()
+        && doc["import_requested"].GetBool();
+    return user;
+}
+
 #if defined(__ANDROID__)
 namespace {
 constexpr char kUpdateChecksumUrl[] = "https://github.com/yonokid/YataiDON/releases/latest/download/checksums-android.sha256";
@@ -424,116 +473,6 @@ void NetworkClient::check_and_install_android_update() {
 }
 #else
 void NetworkClient::check_and_install_android_update() {}
-#endif
-
-#if defined(__ANDROID__)
-namespace {
-
-std::string strip_dot_git(std::string url) {
-    if (url.size() >= 4 && url.compare(url.size() - 4, 4, ".git") == 0) url.resize(url.size() - 4);
-    return url;
-}
-
-void trim(std::string& s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-}
-
-cpr::Response get_classical_tls(const std::string& url, int32_t timeout_ms, int32_t connect_timeout_ms) {
-    cpr::Session session;
-    session.SetUrl(cpr::Url{url});
-    session.SetTimeout(cpr::Timeout{timeout_ms});
-    session.SetConnectTimeout(cpr::ConnectTimeout{connect_timeout_ms});
-    session.SetOption(android_ca());
-    curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_EC_CURVES, "X25519:P-256:P-384");
-    return session.Get();
-}
-
-void update_one_skin(const fs::path& skin_dir, const std::string& repo_url, const std::string& branch) {
-    auto raw_url = [&](const std::string& rel_path) {
-        return repo_url + "/raw/branch/" + branch + "/" + rel_path;
-    };
-
-    cpr::Response checksums = get_classical_tls(raw_url("checksums.sha256"), 10000, 5000);
-    if (checksums.status_code != 200) {
-        spdlog::warn("Skin update ({}): could not fetch checksums.sha256 (HTTP {}, curl error {}: {})",
-                     skin_dir.filename().string(), checksums.status_code,
-                     static_cast<int>(checksums.error.code), checksums.error.message);
-        return;
-    }
-
-    std::istringstream lines(checksums.text);
-    std::string hash, rel_path;
-    int updated = 0;
-    while (lines >> hash >> rel_path) {
-        if (!rel_path.empty() && rel_path.front() == '*') rel_path.erase(0, 1);
-        if (fs::path(rel_path).filename() == "checksums.sha256") continue;
-
-        fs::path local_file = (skin_dir / rel_path).lexically_normal();
-        const fs::path local_rel = local_file.lexically_relative(skin_dir);
-        if (local_rel.empty() || *local_rel.begin() == "..") {
-            spdlog::warn("Skin update ({}): skipping unsafe manifest path {}", skin_dir.filename().string(), rel_path);
-            continue;
-        }
-        std::error_code size_ec;
-        uintmax_t size = fs::file_size(local_file, size_ec);
-        if (!size_ec) {
-            std::ifstream in(local_file, std::ios::binary);
-            std::string contents(size, '\0');
-            in.read(contents.data(), static_cast<std::streamsize>(size));
-            if (crypto::to_hex(crypto::sha256(contents)) == hash) continue;
-        }
-
-        cpr::Response file_resp = get_classical_tls(raw_url(rel_path), 15000, 5000);
-        if (file_resp.status_code != 200) {
-            spdlog::warn("Skin update ({}): failed to download {} (HTTP {})", skin_dir.filename().string(), rel_path, file_resp.status_code);
-            continue;
-        }
-        std::error_code mkdir_ec;
-        fs::create_directories(local_file.parent_path(), mkdir_ec);
-        std::ofstream out(local_file, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            spdlog::warn("Skin update ({}): failed to write {}", skin_dir.filename().string(), rel_path);
-            continue;
-        }
-        out << file_resp.text;
-        ++updated;
-    }
-    spdlog::info("Skin update ({}): {} file(s) updated", skin_dir.filename().string(), updated);
-}
-
-void scan_skins() {
-    std::error_code ec;
-    if (!fs::exists("Skins", ec)) return;
-    for (const auto& entry : fs::directory_iterator("Skins", ec)) {
-        if (ec || !entry.is_directory()) continue;
-
-        std::ifstream repo_file(entry.path() / ".skin-repo");
-        if (!repo_file) continue;
-        std::string repo_url, branch;
-        std::getline(repo_file, repo_url);
-        std::getline(repo_file, branch);
-        trim(repo_url);
-        trim(branch);
-        if (repo_url.empty()) continue;
-        if (branch.empty()) branch = "main";
-
-        update_one_skin(entry.path(), strip_dot_git(repo_url), branch);
-    }
-}
-
-}  // namespace
-
-void NetworkClient::check_android_skin_updates() {
-    if (skin_update_thread.joinable()) return;
-    skin_update_done = std::make_shared<std::atomic<bool>>(false);
-    std::shared_ptr<std::atomic<bool>> done = skin_update_done;
-    skin_update_thread = std::thread([done] {
-        scan_skins();
-        done->store(true);
-    });
-}
-#else
-void NetworkClient::check_android_skin_updates() {}
 #endif
 
 void NetworkClient::update_costume(const std::string& access_code, int head_index, int body_index, int cos_index, bool is_costume) {
@@ -667,12 +606,16 @@ void NetworkClient::clear_import_flag(const std::string& access_code) {
     }
 }
 
-std::string NetworkClient::register_user(const std::string& username) {
+std::string NetworkClient::register_user(const std::string& username, const std::string& idm) {
     if (!network_enabled()) return "";
+    cpr::Payload payload{{"username", username}};
+    if (!idm.empty()) {
+        payload.Add({"idm", idm});
+    }
     cpr::Response response = cpr::Post(
         cpr::Url{network_url("/register_user")},
-        signed_headers("POST", "/register_user", {{"username", username}}),
-        cpr::Payload{{"username", username}},
+        signed_headers("POST", "/register_user", {{"username", username}, {"idm", idm}}),
+        payload,
         cpr::Timeout{5000}
         NETWORK_CA_OPT
     );
@@ -727,15 +670,10 @@ void NetworkClient::submit_score(const std::string& hash, int difficulty, const 
         {"chara_cos_index", std::to_string(chara_cos_index)},
     };
     if (pending_score_submit.has_value()) {
-        if (pending_score_submit->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            cpr::Response response = pending_score_submit->get();
-            pending_score_submit.reset();
-            if (response.status_code != 200) {
-                spdlog::error("Failed to submit score: HTTP {} - {}", response.status_code, response.text);
-            }
-        } else {
-            spdlog::warn("Score submission still in flight; dropping this submission");
-            return;
+        cpr::Response response = pending_score_submit->get();
+        pending_score_submit.reset();
+        if (response.status_code != 200) {
+            spdlog::error("Failed to submit score: HTTP {} - {}", response.status_code, response.text);
         }
     }
     pending_score_submit = cpr::PostAsync(
@@ -863,6 +801,7 @@ void NetworkClient::update(double current_ms) {
 
     if (!network_enabled()) {
         online = false;
+        probing_ = false;
         return;
     }
     if (current_ms - last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
@@ -877,6 +816,9 @@ void NetworkClient::update(double current_ms) {
 
         bool was_online = online;
         online = response.status_code == 200;
+        if (probing_ && !online)
+            spdlog::warn("Network: server unreachable (HTTP {}), skipping profile sync", response.status_code);
+        probing_ = false;
         if (online != was_online) {
             spdlog::info("hiroba heartbeat: {}", online ? "online" : "offline");
         }
@@ -961,17 +903,6 @@ void NetworkClient::shutdown() {
         pending_update_apk->wait();
         pending_update_apk.reset();
     }
-    if (skin_update_thread.joinable()) {
-        for (int waited_ms = 0; waited_ms < 5000 && !skin_update_done->load(); waited_ms += 50) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-        if (skin_update_done->load()) {
-            skin_update_thread.join();
-        } else {
-            spdlog::warn("Skin update: still running after 5s at shutdown, detaching");
-            skin_update_thread.detach();
-        }
-    }
 #endif
     if (pending_score_submit.has_value()) {
         cpr::Response response = pending_score_submit->get();
@@ -985,7 +916,8 @@ void NetworkClient::shutdown() {
 #else
 
 bool NetworkClient::probe_online() { return false; }
-std::string NetworkClient::register_user(const std::string&) { return ""; }
+void NetworkClient::start_probe() {}
+std::string NetworkClient::register_user(const std::string&, const std::string&) { return ""; }
 void NetworkClient::submit_score(const std::string&, int, const std::string&, const Score&, const std::map<double, InputLogType>&, int64_t, const std::string&, bool, int) {}
 bool NetworkClient::check_import_requested(const std::string&) { return false; }
 void NetworkClient::clear_import_flag(const std::string&) {}
@@ -995,8 +927,8 @@ void NetworkClient::update_username(const std::string&, const std::string&) {}
 bool NetworkClient::fetch_title(const std::string&, std::string&) { return false; }
 bool NetworkClient::fetch_title_bg(const std::string&, int&) { return false; }
 bool NetworkClient::fetch_costume(const std::string&, int&, int&, int&, bool&) { return false; }
+std::optional<RemoteUser> NetworkClient::fetch_user(const std::string&) { return std::nullopt; }
 void NetworkClient::check_and_install_android_update() {}
-void NetworkClient::check_android_skin_updates() {}
 void NetworkClient::update_costume(const std::string&, int, int, int, bool) {}
 std::vector<RemoteScore> NetworkClient::fetch_scores(const std::string&) { return {}; }
 void NetworkClient::poll_song_jump(const std::string&) {}

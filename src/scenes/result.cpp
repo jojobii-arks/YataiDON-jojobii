@@ -58,7 +58,9 @@ void ResultScreen::handle_input(double current_ms) {
         }
         return;
     }
-    if (current_ms >= reveal_end + kWaitEffectEndMs + kWaitNextSceneMs && !fade_out->is_started) {
+    const double advance_delay = global_data.config->general.fast_transitions
+        ? kFastInputDelayMs : kWaitEffectEndMs + kWaitNextSceneMs;
+    if (current_ms >= reveal_end + advance_delay && !fade_out->is_started) {
         fade_out->start();
         audio.play_sound("don", VolumePreset::SOUND);
     }
@@ -68,7 +70,8 @@ void ResultScreen::update_input_and_timeout(double current_ms) {
     if (!fade_out || fade_out->is_started) return;
 
     if (skip_enabled_ms == 0 && fade_in.has_value() && fade_in->is_finished())
-        skip_enabled_ms = current_ms + kEnableSkipMs;
+        skip_enabled_ms = current_ms + (global_data.config->general.fast_transitions
+            ? kFastInputDelayMs : kEnableSkipMs);
 
     if (skip_enabled_ms > 0 && current_ms >= skip_enabled_ms) handle_input(current_ms);
 

@@ -1,12 +1,15 @@
 #pragma once
 
 #include "texture.h"
+#include "profiler.h"
 #include <sol/sol.hpp>
 #include <spdlog/spdlog.h>
 #include <set>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 class LuaScript {
@@ -19,8 +22,10 @@ protected:
     bool load(const std::string& class_name, const std::string& script_name, Args&&... args);
 
     template<typename... Args>
-    void call(sol::protected_function& fn, const std::string& context, Args&&... args) {
+    void call(sol::protected_function& fn, std::string_view context, Args&&... args) {
         if (!fn.valid()) return;
+        PROFILE_SCOPE_N("lua");
+        PROFILE_ZONE_NAME(context);
         auto result = fn(lua_object, std::forward<Args>(args)...);
         if (!result.valid()) {
             sol::error err = result;
@@ -29,8 +34,10 @@ protected:
     }
 
     template<typename Ret, typename... Args>
-    sol::optional<Ret> call_r(sol::protected_function& fn, const std::string& context, Args&&... args) {
+    sol::optional<Ret> call_r(sol::protected_function& fn, std::string_view context, Args&&... args) {
         if (!fn.valid()) return sol::nullopt;
+        PROFILE_SCOPE_N("lua");
+        PROFILE_ZONE_NAME(context);
         auto result = fn(lua_object, std::forward<Args>(args)...);
         if (!result.valid()) {
             sol::error err = result;
@@ -51,8 +58,14 @@ private:
     std::map<std::string, std::string> scripts;
     std::set<std::string> executed_scripts;
 public:
-    TextureWrapper tex;
+    // Alias to the engine's global TextureWrapper (::tex) rather than a separate
+    // copy, so C++ screens and Lua scripts share one texture/animation store and
+    // each asset is only decoded and uploaded once per screen change.
+    TextureWrapper& tex;
     std::unique_ptr<sol::state> lua;
+    std::optional<double> current_ms_override;
+
+    ScriptManager() : tex(::tex) {}
 
     void init(fs::path script_path);
     bool has_lua_script(const std::string& script_name) const;
@@ -60,6 +73,7 @@ public:
     std::string get_lua_script_path(const std::string& script_name);
     void index_scripts(const fs::path& script_path);
     void register_lua_bindings();
+    void refresh_method_cache();
 
     bool script_executed(const std::string& script_name) const { return executed_scripts.count(script_name) != 0; }
     void mark_script_executed(const std::string& script_name) { executed_scripts.insert(script_name); }
@@ -74,6 +88,8 @@ void log_lua_site(DrawLogEntry& entry, lua_State* state);
 template<typename... Args>
 bool LuaScript::load(const std::string& class_name, const std::string& script_name, Args&&... args) {
     if (!script_manager.lua) return false;
+    PROFILE_SCOPE_N("lua load");
+    PROFILE_ZONE_TEXT(script_name);
     sol::state& lua = *script_manager.lua;
 
     if (!script_manager.script_executed(script_name)) {
@@ -107,5 +123,6 @@ bool LuaScript::load(const std::string& class_name, const std::string& script_na
     }
 
     lua_object = call_result;
+    script_manager.refresh_method_cache();
     return true;
 }

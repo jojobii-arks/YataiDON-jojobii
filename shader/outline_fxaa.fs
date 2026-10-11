@@ -6,6 +6,8 @@ out vec4 fragColor;
 uniform sampler2D texture0;
 uniform vec2 texSize;
 uniform float outlineThickness;
+uniform vec3 tintColor;
+uniform float tintAmount;
 
 void main() {
     vec2 uv = fragTexCoord;
@@ -21,5 +23,5 @@ void main() {
 
     float alpha = max(coverage, center.a);
     if (alpha <= 0.0) discard;
-    fragColor = vec4(center.a > 0.0 ? center.rgb : vec3(0.0), alpha);
+    fragColor = vec4(center.a > 0.0 ? mix(center.rgb, tintColor, tintAmount) : vec3(0.0), alpha);
 }

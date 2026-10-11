@@ -9,11 +9,15 @@
 #include <mutex>
 #include <stdexcept>
 
+#include "../libs/input.h"
+#include "../libs/global_data.h"
+
 namespace {
 std::mutex clock_mutex;
 bool suspended = false;
 double paused_at = 0;
 double paused_duration = 0;
+void (*g_ios_frame_callback)() = nullptr;
 
 double monotonic_ms() {
     return std::chrono::duration<double, std::milli>(
@@ -117,6 +121,7 @@ void ios_initialize_after_window() {
 
 int ios_run_main_loop(void (*run_frame)()) {
     poll_touch_once();
+    g_ios_frame_callback = run_frame;
     
     int window_count = 0;
     SDL_Window** windows = SDL_GetWindows(&window_count);
@@ -126,7 +131,7 @@ int ios_run_main_loop(void (*run_frame)()) {
     }
     
     bool registered = SDL_SetiOSAnimationCallback(windows[0], 1,
-        [](void*) { run_frame(); }, nullptr);
+        [](void*) { g_ios_frame_callback(); }, nullptr);
     SDL_free(windows);
     
     if (!registered) return 1;
@@ -196,12 +201,10 @@ int ios_handle_touch_navigation(int quadrant_vkey, float touch_x, float touch_y)
     bool navigation = touch_y >= 0.025f && touch_y <= 0.125f;
     if (navigation && touch_x >= 0.36f && touch_x <= 0.49f) {
         // Back button area
-        extern Config* global_config;
-        if (global_config) return global_config->keys.back_key;
+        if (global_data.config) return global_data.config->keys.back_key;
     } else if (navigation && touch_x >= 0.51f && touch_x <= 0.64f) {
         // Pause button area
-        extern Config* global_config;
-        if (global_config) return global_config->keys.pause_key;
+        if (global_data.config) return global_data.config->keys.pause_key;
     }
     return quadrant_vkey;
 }

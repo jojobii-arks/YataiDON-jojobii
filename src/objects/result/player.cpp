@@ -5,7 +5,7 @@
 ResultPlayer::ResultPlayer(PlayerNum player_num, bool has_2p, bool is_2p)
     : player_num(player_num), has_2p(has_2p), is_2p(is_2p)
 {
-    int player_id = get_player_id(player_num);
+    std::string player_id = get_player_id(player_num);
     auto pd = scores_manager.get_player_data(player_id);
 
     chara = make_chara_from_player_data(pd ? &*pd : nullptr, is_2p);
@@ -13,11 +13,12 @@ ResultPlayer::ResultPlayer(PlayerNum player_num, bool has_2p, bool is_2p)
         chara->set_don_colors(pd->chara_color_1, pd->chara_color_2, pd->chara_color_3);
         chara->apply_face(pd->chara_face_index);
     } else {
-        chara->set_don_colors(chara_default_color_1(player_id), chara_default_color_2(player_id), {249, 240, 225, 255});
+        chara->set_don_colors(chara_default_color_1(player_num), chara_default_color_2(player_num), {249, 240, 225, 255});
     }
     chara->set_anim(AnimIndex::DON_NORMAL);
 
     SessionData& sd = global_data.session_data[(int)player_num];
+    if (!sd.result_data.cleared) chara->set_anim(AnimIndex::DON_MISS_NORMAL);
     nameplate = Nameplate(
         pd ? pd->username : "", pd ? pd->title : "",
         player_num,
@@ -56,6 +57,7 @@ ResultPlayer::ResultPlayer(PlayerNum player_num, bool has_2p, bool is_2p)
                 spdlog::error("Error loading {}.lua: {}", script, err.what());
             }
         };
+        preload("Gauge",              "gauge");
         preload("BottomCharacters",   "bottom_characters");
         preload("ResultCrown",        "result_crown");
         preload("ResultCrownMessage", "result_crown_message");

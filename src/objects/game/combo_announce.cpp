@@ -2,61 +2,15 @@
 #include "../../libs/audio.h"
 #include <stdexcept>
 
-namespace {
-
-constexpr int COMBO_ANNOUNCE_FADE_ANIM_ID = 65;
-
-constexpr float CELL       = 104.0f;
-constexpr float GROUP_CX   = 204.0f;   // combo_num's origin inside the scroll
-constexpr float PITCH_WIDE = 64.0f;
-constexpr float PITCH_NARROW = 54.0f;
-constexpr float SX_NARROW  = 0.85f;
-constexpr float NARROW_X0  = -70.0f;   // leftmost cell, local to GROUP_CX
-constexpr float TEXTMC_WIDE   = 392.0f;
-constexpr float TEXTMC_NARROW = 398.0f;
-constexpr float TEXT_DX = -84.0f;
-constexpr float TEXT_W  = 123.0f;
-
-struct Layout {
-    float sx;
-    float pitch;
-    float first_cx;   // centre of the leftmost cell, scroll frame
-    float textmc_x;
-};
-
-Layout layout(int digits) {
-    if (digits <= 3) {
-        return {1.0f, PITCH_WIDE,
-                GROUP_CX - PITCH_WIDE * (digits - 1) * 0.5f, TEXTMC_WIDE};
-    }
-    if (digits == 4) {
-        return {SX_NARROW, PITCH_NARROW, GROUP_CX + NARROW_X0, TEXTMC_NARROW};
-    }
-    const float k     = 4.0f / static_cast<float>(digits);
-    const float pitch = PITCH_NARROW * k;
-    return {SX_NARROW * k, pitch,
-            GROUP_CX + 92.0f - pitch * (digits - 1), TEXTMC_NARROW};
-}
-
-}  // namespace
-
 ComboAnnounce::ComboAnnounce(int combo, double current_ms, PlayerNum player_num)
     : combo(combo), wait(current_ms), player_num(player_num),
       is_finished(false), audio_played(false) {
 
-    fade = dynamic_cast<FadeAnimation*>(tex.get_animation(COMBO_ANNOUNCE_FADE_ANIM_ID, true));
+    fade = dynamic_cast<FadeAnimation*>(tex.get_animation(65, true));
     if (fade == nullptr) {
         throw std::runtime_error("combo announce fade animation missing or of unexpected type");
     }
     fade->start();
-
-    const std::string suffix = std::to_string(static_cast<int>(player_num)) + "p";
-    t_announce_bg = tex.get_texture("combo/announce_bg_" + suffix);
-    const std::string digit_name = "combo/announce_digit_" + suffix;
-    if (tex.has_texture(digit_name)) t_announce_digit = tex.get_texture(digit_name);
-    t_announce_text = tex.get_texture("combo/announce_text");
-    t_announce_number = tex.get_texture("combo/announce_number");
-    t_announce_add = tex.get_texture("combo/announce_add");
 
     if (load("ComboAnnounce", "combo_announce", combo, static_cast<int>(player_num))) {
         fn_draw = lua_object["draw"];
@@ -96,64 +50,5 @@ void ComboAnnounce::draw(float y) {
     if (fn_draw.valid()) {
         call(fn_draw, "ComboAnnounce:draw", y, fade_value);
         return;
-    }
-    draw_default(y, fade_value);
-}
-
-void ComboAnnounce::draw_default(float y, float fade_value) {
-    tex.draw_texture(t_announce_bg,
-                     {.y = y, .fade = fade_value});
-
-    if (t_announce_digit) {
-        const std::string number = std::to_string(combo);
-        const int n = static_cast<int>(number.size());
-        const Layout lay = layout(n);
-        TextureObject* digit_id = t_announce_digit;
-        const float dw = CELL * lay.sx;
-
-        for (int i = 0; i < n; i++) {
-            const float cx = lay.first_cx + lay.pitch * i;
-            tex.draw_texture(digit_id, {
-                .frame = number[i] - '0',
-                .x  = cx - dw * 0.5f,
-                .y  = y,
-                .x2 = dw - CELL,          // horizontal condense only; sy stays 1
-                .fade = fade_value,
-            });
-        }
-
-        tex.draw_texture(t_announce_text, {
-            .x  = lay.textmc_x + lay.sx * TEXT_DX,
-            .y  = y,
-            .x2 = TEXT_W * (lay.sx - 1.0f),
-            .fade = fade_value,
-        });
-        return;
-    }
-
-    if (combo >= 1000) {
-        int thousands = combo / 1000;
-        int remaining_hundreds = (combo % 1000) / 100;
-        float thousands_offset = tex.skin_config[SC::COMBO_ANNOUNCE_THOUSANDS_OFFSET].x;
-        float hundreds_offset = tex.skin_config[SC::COMBO_ANNOUNCE_HUNDREDS_OFFSET].x;
-
-        if (combo % 1000 == 0) {
-            tex.draw_texture(t_announce_number, {.frame = thousands - 1, .x = tex.skin_config[SC::COMBO_ANNOUNCE_NUMBER_THOUSANDS_X].x, .y = y, .fade = fade_value});
-            tex.draw_texture(t_announce_add, {.frame = 0, .x = tex.skin_config[SC::COMBO_ANNOUNCE_ADD_X].x, .y = y, .fade = fade_value});
-        } else {
-            if (thousands <= 5) {
-                tex.draw_texture(t_announce_add, {.frame = thousands, .x = tex.skin_config[SC::COMBO_ANNOUNCE_THOUSANDS_ADD_X].x + thousands_offset, .y = y, .fade = fade_value});
-            } else {
-                tex.draw_texture(t_announce_number, {.frame = thousands - 1, .x = tex.skin_config[SC::COMBO_ANNOUNCE_NUMBER_THOUSANDS_X].x, .y = y, .fade = fade_value});
-            }
-            if (remaining_hundreds > 0) {
-                tex.draw_texture(t_announce_number, {.frame = remaining_hundreds - 1, .x = hundreds_offset, .y = y, .fade = fade_value});
-            }
-        }
-        float text_offset = tex.skin_config[SC::COMBO_ANNOUNCE_TEXT_OFFSET].x;
-        tex.draw_texture(t_announce_text, {.x = -text_offset / 2, .y = y, .fade = fade_value});
-    } else if (combo >= 100) {
-        tex.draw_texture(t_announce_number, {.frame = combo / 100 - 1, .x = 0, .y = y, .fade = fade_value});
-        tex.draw_texture(t_announce_text, {.x = 0, .y = y, .fade = fade_value});
     }
 }

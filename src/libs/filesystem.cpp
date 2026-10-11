@@ -11,7 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #ifdef YATAIDON_PLATFORM_IOS
-    #include "../platform/ios.h"
+    #include "../platform/platform_ios.h"
 #endif
 
 #ifdef _WIN32
@@ -195,8 +195,78 @@ std::vector<std::string> list_available_skins() {
     return names;
 }
 
+#ifdef _WIN32
+// Windows walk for collect_charts_from. recursive_directory_iterator stats every entry and
+// fs::canonical stats every component of every folder, which took seconds on a library of a few
+// thousand folders; a directory listing already carries each entry's attributes. Same paths in the
+// same order as the portable walk below.
+struct ChartWalk {
+    std::vector<fs::path>& songs;
+    std::vector<fs::path>* osz_out;
+    // Resolved path of every folder entered: a link back to one of them is not followed again.
+    // A plain folder resolves to its parent's resolved path plus its name, so only links are opened.
+    std::unordered_set<std::wstring> visited_dirs;
+
+    void add(const fs::path& p, const fs::path& ext, bool under_fumen) {
+        if (ext == ".tja" || ext == ".osu") {
+            songs.push_back(p);
+        } else if (ext == ".osz") {
+            if (osz_out) osz_out->push_back(p);
+        } else if (ext == ".bin" && under_fumen) {
+            songs.push_back(p);
+        }
+    }
+
+    // `entries` is the listing of `dir`; `resolved` is dir's resolved path
+    void walk(const fs::path& dir, const std::wstring& resolved, const std::vector<Win32DirEntry>& entries,
+              bool under_fumen) {
+        for (const Win32DirEntry& e : entries) {
+            fs::path p = dir / e.name;
+            if (!e.is_dir) {
+                add(p, p.extension(), under_fumen);
+                continue;
+            }
+            std::wstring child_resolved = e.is_reparse ? win32_final_path(p) : resolved + L'\\' + e.name;
+            if (child_resolved.empty()) {
+                // Cannot prove this is not a loop -> do not recurse into it.
+                spdlog::warn("collect_charts_from: cannot canonicalize {}, skipping recursion", p.string());
+                continue;
+            }
+            if (!visited_dirs.insert(child_resolved).second) continue;
+
+            std::vector<Win32DirEntry> children;
+            const bool listed = win32_list_dir(p, children);
+#ifdef SUPPORT_FUMEN
+            // Both data roots have a fumen folder: only then ask them
+            bool has_fumen = false;
+            for (const Win32DirEntry& c : children)
+                if (c.is_dir && _wcsicmp(c.name.c_str(), L"fumen") == 0) { has_fumen = true; break; }
+            if (has_fumen && (gen4::find_data_root(p) == p || gen3::find_data_root(p) == p))
+                continue;
+#endif
+            add(p, p.extension(), under_fumen);
+            if (listed) walk(p, child_resolved, children, under_fumen || e.name == L"fumen");
+        }
+    }
+};
+#endif
+
 static void collect_charts_from(const fs::path& path, std::vector<fs::path>& songs,
                                  std::vector<fs::path>* osz_out) {
+#ifdef _WIN32
+    std::vector<Win32DirEntry> entries;
+    if (!win32_list_dir(path, entries))
+        throw fs::filesystem_error("cannot open directory", path, std::make_error_code(std::errc::no_such_file_or_directory));
+    bool under_fumen = false;
+    for (fs::path dir = path; !dir.empty() && dir != dir.parent_path(); dir = dir.parent_path()) {
+        if (dir.filename() == "fumen") { under_fumen = true; break; }
+    }
+    ChartWalk w{songs, osz_out, {}};
+    std::wstring root = win32_final_path(path);
+    if (root.empty()) root = fs::absolute(path).wstring();
+    w.visited_dirs.insert(root);
+    w.walk(path, root, entries, under_fumen);
+#else
     // A symlinked directory that points back at one of its own ancestors would
     // otherwise make the recursive iterator loop forever. Track the canonical
     // path of every directory entered so a symlink resolving to one of them
@@ -256,6 +326,7 @@ static void collect_charts_from(const fs::path& path, std::vector<fs::path>& son
             if (under_fumen) songs.push_back(entry.path());
         }
     }
+#endif
 }
 
 std::vector<fs::path> get_song_files(const std::vector<fs::path>& root_path) {
@@ -371,6 +442,7 @@ void write_song_list(const fs::path& path, const std::vector<SongListEntry>& ent
 namespace {
 fs::path g_skin_graphics_path;
 fs::path g_parent_skin_graphics_path;
+std::vector<fs::path> g_skin_chain;   // Graphics paths: the skin, its parent, the parent's parent ...
 std::mutex g_skin_path_mutex;
 
 fs::path skin_root(const fs::path& graphics_path) {
@@ -407,11 +479,33 @@ fs::path resolve_parent_graphics_path(const fs::path& graphics_path) {
     return graphics_path;
 }
 
+std::vector<fs::path> resolve_skin_chain(const fs::path& graphics_path) {
+    std::vector<fs::path> chain{graphics_path};
+    for (int depth = 0; depth < 8; depth++) {
+        fs::path parent = resolve_parent_graphics_path(chain.back());
+        if (parent == chain.back()) break;
+        if (std::find(chain.begin(), chain.end(), parent) != chain.end()) {
+            spdlog::warn("resolve_skin_chain: parent cycle at '{}'", parent.string());
+            break;
+        }
+        chain.push_back(parent);
+    }
+    return chain;
+}
+
 void set_skin_graphics_path(const fs::path& graphics_path) {
-    fs::path parent_graphics_path = resolve_parent_graphics_path(graphics_path);
+    std::vector<fs::path> chain = resolve_skin_chain(graphics_path);
     std::lock_guard<std::mutex> lock(g_skin_path_mutex);
     g_skin_graphics_path = graphics_path;
-    g_parent_skin_graphics_path = parent_graphics_path;
+    g_parent_skin_graphics_path = chain.size() > 1 ? chain[1] : graphics_path;
+    g_skin_chain = chain;
+}
+
+std::vector<fs::path> skin_ancestor_roots() {
+    std::lock_guard<std::mutex> lock(g_skin_path_mutex);
+    std::vector<fs::path> roots;
+    for (size_t i = 1; i < g_skin_chain.size(); i++) roots.push_back(skin_root(g_skin_chain[i]));
+    return roots;
 }
 
 bool skin_has_parent() {
@@ -425,19 +519,18 @@ fs::path parent_skin_root() {
 }
 
 fs::path resolve_skin_path(const fs::path& relative_path) {
-    fs::path child_root, parent_root;
-    bool has_parent;
+    fs::path child_root;
+    std::vector<fs::path> chain;
     {
         std::lock_guard<std::mutex> lock(g_skin_path_mutex);
         child_root = skin_root(g_skin_graphics_path);
-        has_parent = skin_has_parent_locked();
-        if (has_parent) parent_root = skin_root(g_parent_skin_graphics_path);
+        chain = g_skin_chain;
     }
     fs::path child = child_root / relative_path;
     if (fs::exists(child)) return child;
-    if (has_parent) {
-        fs::path parent = parent_root / relative_path;
-        if (fs::exists(parent)) return parent;
+    for (size_t i = 1; i < chain.size(); i++) {
+        fs::path ancestor = skin_root(chain[i]) / relative_path;
+        if (fs::exists(ancestor)) return ancestor;
     }
     return child;
 }

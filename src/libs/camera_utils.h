@@ -6,8 +6,8 @@
 inline ray::Camera2D compute_camera2d(int virtual_width, int virtual_height) {
     int vw = std::max(virtual_width, 1);
     int vh = std::max(virtual_height, 1);
-    int sw = std::max(ray::GetScreenWidth(), 1);
-    int sh = std::max(ray::GetScreenHeight(), 1);
+    int sw = std::max(ray::GetRenderWidth(), 1);
+    int sh = std::max(ray::GetRenderHeight(), 1);
 
     float scale        = std::min((float)sw / vw, (float)sh / vh);
     float base_ox      = (sw - vw * scale) * 0.5f;
@@ -31,8 +31,8 @@ inline ray::Camera2D compute_camera2d(int virtual_width, int virtual_height) {
 }
 
 inline ray::Camera3D camera2d_to_3d(ray::Camera2D cam) {
-    float sw   = (float)ray::GetScreenWidth();
-    float sh   = (float)ray::GetScreenHeight();
+    float sw   = (float)ray::GetRenderWidth();
+    float sh   = (float)ray::GetRenderHeight();
     float zoom = std::max(cam.zoom, 0.0001f); // guard divide-by-zero/negative zoom
     float rot  = cam.rotation * DEG2RAD;
     float cx   = (sw * 0.5f - cam.offset.x) / zoom + cam.target.x;

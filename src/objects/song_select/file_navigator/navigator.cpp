@@ -7,11 +7,16 @@
 #include "../song_select_script.h"
 #include "../../../libs/filesystem.h"
 #include "../../../libs/tier_list.h"
+#ifdef _WIN32
+#include "../../../platform/platform_windows.h"
+#endif
 #ifdef SUPPORT_FUMEN
 #include "../../../libs/optional/gen4.h"
 #include "../../../libs/optional/gen3.h"
 #endif
+#include <chrono>
 #include <random>
+#include <thread>
 #include <algorithm>
 #include <cmath>
 #include "../../../libs/scores.h"
@@ -220,13 +225,24 @@ Navigator::~Navigator() {
 void Navigator::emit_wheel_event(int id) {
     wheel_event = id;
     ++wheel_event_seq;
+    if ((id == WHEEL_EVENT_OPEN_BEGIN || id == WHEEL_EVENT_OPEN_SWAP) && script)
+        script->start_folder_open();
+
+    if (id != WHEEL_EVENT_OPEN_BEGIN && id != WHEEL_EVENT_OPEN_SWAP && script)
+        script->finish_folder_open();
+
     if (id == WHEEL_EVENT_OPEN_BEGIN || id == WHEEL_EVENT_CLOSE_BEGIN)
         wheel_leg_ms = get_current_ms();
 }
 
+// The swap waits for the arcade's leg timing only for a skin that draws the legs from the wheel
+// events; without one the screen sat empty for the rest of that time.
 bool Navigator::swap_is_early(int begin_id) const {
-    if (wheel_event != begin_id) return false;
-    return (get_current_ms() - wheel_leg_ms) < kSwapDelayMs;
+    if (!wheel_events_read || wheel_event != begin_id) return false;
+    const double duration_scale = global_data.config->general.fast_transitions &&
+        begin_id == WHEEL_EVENT_OPEN_BEGIN ? 0.2 : 1.0;
+
+    return (get_current_ms() - wheel_leg_ms) < kSwapDelayMs * duration_scale;
 }
 
 void Navigator::wait_for_song_files() {
@@ -246,6 +262,7 @@ void Navigator::load_all_roots() {
     items.clear();
     open_index = 0;
     def_file_cache.clear();
+    child_folders_cache.clear();
     box_def_cache.clear();
     is_processing    = true;
     loading_complete = false;
@@ -271,18 +288,32 @@ void Navigator::load_all_roots() {
 
 void Navigator::reset_for_skin_reload() {
     join_loader();
+    wait_for_song_files();
+
+    inline_state.reset();
+    pending_inline_folder = nullptr;
+    pending_inline_path.reset();
+    genre_bg.reset();
+    items.clear();
+    while (!pending_boxes.empty()) pending_boxes.pop();
+    while (!pending_inline_boxes.empty()) pending_inline_boxes.pop();
+
+    script = nullptr;
+    is_inline = false;
+    inline_streaming = false;
+    wheel_events_read = false;
     is_init = false;
 }
 
-void Navigator::preload(std::vector<fs::path> songs_paths) {
+void Navigator::preload(std::vector<fs::path> songs_paths, std::optional<std::vector<fs::path>> listed) {
     if (is_preloaded) return;
     root_paths = songs_paths;
     open_index = 0;
 
 #ifndef __EMSCRIPTEN__
     song_files_ready = false;
-    song_files_thread = std::thread([this, songs_paths]() {
-        std::vector<fs::path> files = get_song_files(songs_paths);
+    song_files_thread = std::thread([this, songs_paths, listed = std::move(listed)]() {
+        std::vector<fs::path> files = listed ? *listed : get_song_files(songs_paths);
         std::mutex map_mutex;
         std::atomic<size_t> cursor{0};
         unsigned pool_size = std::max(2u, std::thread::hardware_concurrency() / 2);
@@ -294,6 +325,22 @@ void Navigator::preload(std::vector<fs::path> songs_paths) {
                     if (i >= files.size() || abort_loading) break;
                     const fs::path& file = files[i];
                     if (!is_song_file(file)) continue;
+                    // the loading screen already read this chart (parsed or from its cache)
+                    auto u8 = file.u8string();
+                    if (auto meta = scores_manager.get_song_meta(std::string(u8.begin(), u8.end()))) {
+                        bool playable = false;
+                        for (int lv : meta->levels) if (lv >= 0) { playable = true; break; }
+                        if (playable) {
+                            std::lock_guard<std::mutex> lock(map_mutex);
+                            song_files[{meta->title, meta->subtitle}] = file;
+                            std::string text;
+                            for (const auto& [lang, t] : meta->titles)    text += t + '\n';
+                            for (const auto& [lang, t] : meta->subtitles) text += t + '\n';
+                            song_search_text[file.string()] = search_fold(text);
+                            song_levels[file.string()] = meta->levels;
+                        }
+                        continue;
+                    }
                     try {
                         SongParser parsed_entry = SongParser(file);
                         parsed_entry.get_metadata();
@@ -523,9 +570,6 @@ void sort_items(std::vector<std::unique_ptr<BaseBox>>& items, int first_index, i
     if (first_index >= 0 && last_index > first_index &&
         last_index < static_cast<int>(items.size())) {
 
-        auto begin = items.begin() + first_index;
-        auto end   = items.begin() + last_index + 1;
-
         std::vector<int> back_box_positions;
         std::vector<std::unique_ptr<BaseBox>> sortable;
 
@@ -651,27 +695,50 @@ void Navigator::parse_song_list(const fs::path& path, BoxDef box_def, bool inlin
     bool needs_rewrite = false;
     int songs_added = 0;
 
-    for (const auto& entry : entries) {
-        fs::path final_path;
+    // Resolve every entry first so the songs can be parsed in parallel
+    std::vector<fs::path> resolved(entries.size());
+    for (size_t i = 0; i < entries.size(); i++) {
+        const auto& entry = entries[i];
+        fs::path& final_path = resolved[i];
 
-        if (auto found = scores_manager.get_path_by_hash(entry.hash)) {
+        // Hash is the primary reference. If several songs share it, title and
+        // subtitle disambiguate only among candidates with that same hash.
+        if (auto found = scores_manager.get_path_by_hash(entry.hash))
             final_path = *found;
+        if (!entry.title.empty() || !entry.subtitle.empty()) {
+            if (auto by_title = find_song_by_title(entry.title, entry.subtitle);
+                by_title && scores_manager.get_single_hash(*by_title) == entry.hash)
+                final_path = *by_title;
+        }
+        if (final_path.empty()) {
+            if (auto song_path_opt = find_song_by_title(entry.title, entry.subtitle))
+                final_path = *song_path_opt;
+        }
+    }
+    std::vector<fs::path> to_parse;
+    for (const fs::path& p : resolved)
+        if (!p.empty()) to_parse.push_back(p);
+    auto preparsed = parse_songs_parallel(to_parse, abort_loading);
+
+    for (size_t i = 0; i < entries.size(); i++) {
+        const auto& entry = entries[i];
+        const fs::path& final_path = resolved[i];
+        if (final_path.empty()) {
             out_entries.push_back(entry);
-        } else {
-            auto song_path_opt = find_song_by_title(entry.title, entry.subtitle);
-            if (!song_path_opt) {
-                out_entries.push_back(entry);
-                spdlog::warn("No song found for: {} | {}", entry.title, entry.subtitle);
-                continue;
-            }
-            final_path = *song_path_opt;
-            std::string correct_hash = scores_manager.get_single_hash(final_path);
-            out_entries.push_back({correct_hash, entry.title, entry.subtitle});
-            spdlog::info("Found song: {} | {} with hash {}", entry.title, entry.subtitle, correct_hash);
-            needs_rewrite = true;
+            spdlog::warn("No song found for: {} | {}", entry.title, entry.subtitle);
+            continue;
         }
 
-        auto box = make_song_box(final_path, box_def, SongParser(final_path));
+        SongParser parser = take_parser(preparsed, final_path);
+        const auto& titles = parser.metadata.title;
+        const auto& subtitles = parser.metadata.subtitle;
+        const std::string title = titles.count("en") ? titles.at("en") : titles.begin()->second;
+        const std::string subtitle = subtitles.count("en") ? subtitles.at("en") : subtitles.begin()->second;
+        const std::string correct_hash = scores_manager.get_single_hash(final_path);
+        out_entries.push_back({correct_hash, title, subtitle});
+        needs_rewrite |= entry.hash != correct_hash || entry.title != title || entry.subtitle != subtitle;
+
+        auto box = make_song_box(final_path, box_def, std::move(parser));
         box->preserve_order = true;
         if (songs_added > 0 && songs_added % 10 == 0)
             enqueue_inline_box(make_back_box(path.parent_path().parent_path(), &inline_back_def));
@@ -872,29 +939,62 @@ void Navigator::load_current_directory_async(const fs::path path) {
     if (!reloading_roots) FolderBox::run_deferred_scans(abort_loading);
 }
 
-void Navigator::load_collection_new(const fs::path& path, const BoxDef& box_def) {
-    auto two_weeks_ago = ch::system_clock::now() - ch::weeks(2);
-    int songs_added = 0;
-    for (const auto& sibling : fs::directory_iterator(path.parent_path())) {
+// New songs: charts whose folder changed in the last two weeks. The startup scan already listed
+// every playable chart (song_levels), so only those folders' write times are read -- no second
+// walk of the whole library. Songs live under the siblings of the collection folder. Call only
+// once the scan is done (song_levels is read without a lock).
+std::vector<fs::path> Navigator::find_new_songs(const fs::path& path) const {
+    std::vector<fs::path> hits;
+    const fs::path parent = path.parent_path();
+    const auto two_weeks_ago = fs::file_time_type::clock::now() - ch::weeks(2);
+    std::vector<std::string> index;
+    index.reserve(song_levels.size());
+    for (const auto& [path_str, levels] : song_levels) index.push_back(path_str);
+    std::sort(index.begin(), index.end());
+    for (const auto& path_str : index) {
         if (abort_loading) break;
-        if (!fs::is_directory(sibling) || sibling.path() == path) continue;
-        BoxDef sibling_box_def = parse_box_def(sibling.path());
-        for (const auto& entry : fs::recursive_directory_iterator(sibling)) {
-            if (abort_loading) break;
-            if (!is_song_file(entry.path())) continue;
-            auto last_write = fs::last_write_time(entry.path().parent_path());
-            auto last_write_sys = ch::system_clock::now() +
-                std::chrono::duration_cast<ch::system_clock::duration>(
-                    last_write - std::filesystem::file_time_type::clock::now());
-            if (last_write_sys < two_weeks_ago) continue;
-            if (songs_added > 0 && songs_added % 10 == 0)
-                enqueue_inline_box(make_back_box(path.parent_path(), &inline_back_def));
-            auto song = make_song_box(entry.path(), box_def, SongParser(entry.path()));
-            apply_song_genre(song.get(), sibling_box_def);
-            song->fade_in(266);
-            enqueue_inline_box(std::move(song));
-            songs_added++;
-        }
+        fs::path song_path(path_str);
+        fs::path rel = song_path.lexically_relative(parent);
+        if (rel.empty() || rel.begin()->string() == "..") continue;
+        fs::path sibling = parent / *rel.begin();
+        if (sibling == path) continue;
+        std::error_code ec;
+        auto last_write = fs::last_write_time(song_path.parent_path(), ec);
+        if (ec || last_write < two_weeks_ago) continue;
+        hits.push_back(song_path);
+    }
+    return hits;
+}
+
+// The hits and their parsers usually come from the prefetch started with the folder's open
+// animation (begin_inline_load); the sibling of the collection folder supplies the genre.
+void Navigator::load_collection_new(const fs::path& path, const BoxDef& box_def) {
+    std::vector<fs::path> hits;
+    std::unordered_map<std::string, std::unique_ptr<SongParser>> preparsed;
+    join_prefetch();
+    // join_loader aborts a prefetch still running when the animation ends: its list may be cut short
+    if (prefetch && prefetch->new_songs && prefetch->complete && prefetch->path == path && !abort_loading) {
+        hits      = std::move(prefetch->song_paths);
+        preparsed = std::move(prefetch->preparsed);
+        prefetch.reset();
+    } else {
+        prefetch.reset();
+        wait_for_song_files();
+        hits      = find_new_songs(path);
+        preparsed = parse_songs_parallel(hits, abort_loading);
+    }
+
+    const fs::path parent = path.parent_path();
+    int songs_added = 0;
+    for (const auto& h : hits) {
+        if (abort_loading) break;
+        if (songs_added > 0 && songs_added % 10 == 0)
+            enqueue_inline_box(make_back_box(parent, &inline_back_def));
+        auto song = make_song_box(h, box_def, take_parser(preparsed, h));
+        apply_song_genre(song.get(), parse_box_def(parent / *h.lexically_relative(parent).begin()));
+        song->fade_in(266);
+        enqueue_inline_box(std::move(song));
+        songs_added++;
     }
 }
 
@@ -1089,11 +1189,14 @@ void Navigator::load_from_song_list(const fs::path& path, const BoxDef& box_def,
         fs::path song_path;
         if (auto found = scores_manager.get_path_by_hash(entry.hash)) {
             song_path = *found;
-        } else {
-            auto it = song_files.find({entry.title, entry.subtitle});
-            if (it == song_files.end()) continue;
-            song_path = it->second;
         }
+        if (!entry.title.empty() || !entry.subtitle.empty()) {
+            auto by_title = song_files.find({entry.title, entry.subtitle});
+            if (by_title != song_files.end() &&
+                scores_manager.get_single_hash(by_title->second) == entry.hash)
+                song_path = by_title->second;
+        }
+        if (song_path.empty()) continue;
         if (songs_added > 0 && songs_added % 10 == 0)
             enqueue_inline_box(make_back_box(path.parent_path(), &inline_back_def));
         auto song = make_song_box(song_path, box_def, SongParser(song_path));
@@ -1224,16 +1327,23 @@ void Navigator::load_collection_recommended(const fs::path& path, const BoxDef& 
 void Navigator::load_collection_search(const fs::path& path, const BoxDef& box_def) {
     if (current_search.empty()) return;
     const std::string query = search_fold(current_search);
-    int songs_added = 0;
+    // Match any title / subtitle in any language (the box key is the English pair only), then
+    // parse the hits in parallel: a short query can match hundreds of songs
+    std::vector<fs::path> hits;
     for (const auto& [key, song_path] : song_files) {
         if (abort_loading) break;
-        // Match any title / subtitle in any language (the box key is the English pair only).
         auto st = song_search_text.find(song_path.string());
         const std::string& text = (st != song_search_text.end()) ? st->second : search_fold(key.first);
-        if (text.find(query) == std::string::npos) continue;
+        if (text.find(query) != std::string::npos) hits.push_back(song_path);
+    }
+    auto preparsed = parse_songs_parallel(hits, abort_loading);
+
+    int songs_added = 0;
+    for (const fs::path& song_path : hits) {
+        if (abort_loading) break;
         if (songs_added > 0 && songs_added % 10 == 0)
             enqueue_inline_box(make_back_box(path.parent_path(), &inline_back_def));
-        auto song = make_song_box(song_path, box_def, SongParser(song_path));
+        auto song = make_song_box(song_path, box_def, take_parser(preparsed, song_path));
         fs::path genre_folder = find_box_def_folder(song_path);
         if (!genre_folder.empty())
             apply_song_genre(song.get(), parse_box_def(genre_folder));
@@ -1297,6 +1407,21 @@ void Navigator::start_inline_prefetch(const fs::path& path) {
     prefetch_thread = std::thread([this, pf] {
         scan_song_tree(pf->path, pf->song_paths, pf->plan);
         if (!abort_loading) pf->preparsed = parse_songs_parallel(pf->song_paths, abort_loading);
+    });
+}
+
+// Only once the startup scan is done: the prefetch thread must not join song_files_thread (the
+// loader does) and reads song_levels without a lock.
+void Navigator::start_new_songs_prefetch(const fs::path& path) {
+    join_prefetch();
+    prefetch = std::make_unique<InlinePrefetch>();
+    prefetch->path = path;
+    prefetch->new_songs = true;
+    InlinePrefetch* pf = prefetch.get();
+    prefetch_thread = std::thread([this, pf] {
+        pf->song_paths = find_new_songs(pf->path);
+        if (!abort_loading) pf->preparsed = parse_songs_parallel(pf->song_paths, abort_loading);
+        pf->complete = !abort_loading;
     });
 }
 
@@ -1395,7 +1520,7 @@ void Navigator::load_songs_inline_async(const fs::path path, BoxDef box_def) {
     std::vector<fs::path> song_paths;
     std::unordered_map<std::string, std::vector<std::pair<bool, fs::path>>> plan;
     join_prefetch();
-    if (prefetch && prefetch->path == path && !abort_loading) {
+    if (prefetch && !prefetch->new_songs && prefetch->path == path && !abort_loading) {
         song_paths = std::move(prefetch->song_paths);
         plan       = std::move(prefetch->plan);
         preparsed  = std::move(prefetch->preparsed);
@@ -1591,6 +1716,8 @@ void Navigator::begin_inline_load() {
     emit_wheel_event(WHEEL_EVENT_OPEN_BEGIN);
     if (pending_inline_path && pending_inline_box_def.collection.empty())
         start_inline_prefetch(*pending_inline_path);
+    else if (pending_inline_path && pending_inline_box_def.collection == "NEW" && song_files_ready)
+        start_new_songs_prefetch(*pending_inline_path);
     bg_genre_pending = false;
     int approx_items = (pending_inline_box_def.collection == "RECOMMENDED" ||
                         pending_inline_box_def.collection == "DIFFICULTY" ||
@@ -1614,14 +1741,21 @@ void Navigator::begin_inline_load() {
     genre_bg.emplace(items[open_index]->text_name, items[open_index]->back_color,
                      items[open_index]->texture_index, approx_items * 100);
     is_processing = true;
-    // The boxes below the opened folder slide out of the way for the inline list.
-    // A skin that draws the wheel itself animates them on its own (the cabinet
-    // flies them out on the decide clip); the slide would take them off screen at
-    // once, before that animation can play, so leave their positions to the swap.
-    if (script && script->has_draw_box()) return;
-    for (int i = 0; i < (int)items.size(); i++) {
-        if (items[i]->position > items[open_index]->position)
-            items[i]->move_box(tex.screen_width + 150, 600);
+    // The boxes below the opened folder slide out of the way for the inline list: by the room its
+    // songs will take (where set_positions puts them once they are in), not always off screen --
+    // a folder of two songs pushed its neighbours out of view and back. They ride the genre
+    // background's right edge (same delay, duration and linear motion as its move), so no empty
+    // gap opens ahead of it. Unknown size (a collection such as NEW counts 0): the background does
+    // not widen, so they stay put and set_positions moves them once the songs are in -- sending
+    // them off screen left the right side empty for the whole wait.
+    if (approx_items > 0) {
+        const float edge_delay = (float)(genre_bg->stretch->duration * 1.5);
+        const float edge_duration = (float)genre_bg->move->duration;
+        for (int i = 0; i < (int)items.size(); i++) {
+            if (items[i]->position > items[open_index]->position) // "18" is a '''magic''' number that should fits for almost everything
+              items[i]->move_box(std::min(items[i]->position + approx_items * base_spacing, items[i]->position + 18 * base_spacing),
+                                   edge_duration, edge_delay, std::nullopt);
+        }
     }
 }
 
@@ -1695,6 +1829,7 @@ void Navigator::load_current_directory(const fs::path path) {
 
     open_index = 0;
     def_file_cache.clear();
+    child_folders_cache.clear();
     box_def_cache.clear();
     setup_back_box(path, true);
     is_processing = true;
@@ -1754,6 +1889,7 @@ bool Navigator::jump_to_song_path(const fs::path& song_path) {
     auto load_full = [&](const fs::path& folder) {
         open_index = 0;
         def_file_cache.clear();
+    child_folders_cache.clear();
         box_def_cache.clear();
         setup_back_box(folder, true);
         loading_complete = false;
@@ -1867,7 +2003,16 @@ void Navigator::setup_back_box(const fs::path& path, bool has_children, const Ba
     }
 }
 
+// Asked again for the same folder on every open and close (closing a folder asks it of the parent).
 bool Navigator::has_child_folders(const fs::path& path) {
+    const std::string key = path.string();
+    if (auto it = child_folders_cache.find(key); it != child_folders_cache.end()) return it->second;
+    const bool result = scan_child_folders(path);
+    child_folders_cache[key] = result;
+    return result;
+}
+
+bool Navigator::scan_child_folders(const fs::path& path) {
 #ifdef SUPPORT_FUMEN
     if (gen4::genre_of_path(path) >= 0) return false;
     if (!gen3::genre_of_path(path).empty()) return false;
@@ -1875,19 +2020,56 @@ bool Navigator::has_child_folders(const fs::path& path) {
     if (is_gen4_root(path) || is_gen3_root(path)) return true;
     if (path.filename() == ".tier_sort") return false;
 
-    std::error_code ec;
-    if (!fs::exists(path, ec) || !fs::is_directory(path, ec)) return false;
+#ifdef _WIN32
+    // The same checks from one listing per child folder: the portable loop listed each child twice and
+    // stat'ed it about six times, which took most of a second for a genre of several hundred songs.
+    std::vector<Win32DirEntry> entries;
+    if (!win32_list_dir(path, entries))
+        throw fs::filesystem_error("cannot open directory", path,
+                                   std::make_error_code(std::errc::no_such_file_or_directory));
+    auto named = [](const Win32DirEntry& e, const wchar_t* name) { return _wcsicmp(e.name.c_str(), name) == 0; };
+    for (const Win32DirEntry& entry : entries) {
+        if (!entry.is_dir) continue;
+        const fs::path child = path / entry.name;
+        std::vector<Win32DirEntry> inner;
+        if (!win32_list_dir(child, inner)) continue;
 
-    for (const auto& entry : fs::directory_iterator(path, fs::directory_options::skip_permission_denied, ec)) {
+        bool has_fumen = false, has_usrdir = false;
+        for (const Win32DirEntry& e : inner) {
+            if (named(e, L"box.def")) return true;                                       // has_def_file
+            if (!e.is_dir) {
+                if (fs::path(e.name).extension() == ".osu") return true;                  // is_osu_song_folder
+            } else if (named(e, L"fumen")) {
+                has_fumen = true;
+            } else if (named(e, L"USRDIR")) {
+                has_usrdir = true;
+            }
+        }
+        // a data root has a fumen folder (gen3 may sit under USRDIR/data)
+        if ((has_fumen || has_usrdir) && (is_gen4_root(child) || !gen3_root_at(child).empty()))
+            return true;
+        // has_def_file: a box.def further down, not inside a data root
+        for (const Win32DirEntry& e : inner) {
+            if (!e.is_dir) continue;
+            const fs::path sub = child / e.name;
+            if (is_gen4_root(sub) || !gen3_root_at(sub).empty()) continue;
+            if (has_def_file(sub)) return true;
+        }
+    }
+    return false;
+#else
+    for (const auto& entry : fs::directory_iterator(path)) {
         if (fs::is_directory(entry.path()) && has_def_file(entry.path()) || is_osu_song_folder(entry.path()))
             return true;
         if (is_gen4_root(entry.path()) || !gen3_root_at(entry.path()).empty())
             return true;
     }
     return false;
+#endif
 }
 
 bool Navigator::is_directory(BaseBox* item) {
+    if (item == nullptr) return false;
     if (dynamic_cast<FolderBox*>(item) != nullptr) return true;
     return !is_song(item) && fs::is_directory(item->path);
 }
@@ -2403,7 +2585,22 @@ void Navigator::update(double current_ms) {
                          std::move(state.saved_folder_box));
             open_index = state.folder_index;
             inline_state.reset();
+            std::vector<float> before;
+            for (const auto& box : items) before.push_back(box->position);
             set_positions(false, 500);
+            // The boxes the open folder pushed off screen are a screen width or more from their
+            // place, so set_positions puts them there at once: slide them in from the screen edge on
+            // their side instead (not from where they were: the list wraps, so that can be the far side)
+            if (!vertical_gallery) {
+                const float center = items[open_index]->position;
+                for (size_t i = 0; i < items.size(); i++) {
+                    const float to = items[i]->position;
+                    const bool was_off = before[i] > tex.screen_width || before[i] < -100.0f;
+                    if (to == before[i] || !was_off || to < -100.0f || to > tex.screen_width) continue;
+                    items[i]->set_position(to > center ? tex.screen_width + 100.0f : -200.0f);
+                    items[i]->move_box(to, 500);
+                }
+            }
             items[open_index]->exit_box();
             genre_bg.reset();
             is_processing = false;
@@ -2457,7 +2654,7 @@ void Navigator::draw() {
 
         if (genre_bg.has_value()) {
             FolderBox* folder = pending_inline_folder;
-            genre_bg->draw(start_pos, end_pos, folder);
+            if (script) script->draw_genre_bg(&genre_bg.value(), start_pos, end_pos, folder);
         }
     }
     for (auto& box : items) {
@@ -2465,8 +2662,7 @@ void Navigator::draw() {
             ? (box->position > -100 && box->position < tex.screen_height + 100)
             : (box->position > -100 && box->position < tex.screen_width  + 100);
         if (on_screen) {
-            if (!script || !script->draw_box(box.get()))
-                box->draw();
+            if (script) script->draw_box(box.get());
         }
     }
 }
@@ -2474,8 +2670,7 @@ void Navigator::draw() {
 void Navigator::draw_diff_select_bg() {
     if (open_index >= items.size()) return;
     BaseBox* box = items[open_index].get();
-    if (!script || !script->draw_box_bg(box))
-        box->draw_diff_select_bg();
+    if (script) script->draw_box_bg(box);
 }
 
 void Navigator::draw_score_history() {
@@ -2483,6 +2678,9 @@ void Navigator::draw_score_history() {
         items[open_index]->draw_score_history();
 }
 
+// Course clear counts for the difficulty sort. The levels come from the startup scan (song_levels),
+// not a parse of every chart on disk: song select waits for this before it opens the difficulty
+// sort and before it hands over to the next screen.
 Statistics Navigator::get_statistics(const fs::path& path) {
     Statistics stats;
 
@@ -2490,36 +2688,34 @@ Statistics Navigator::get_statistics(const fs::path& path) {
         for (int level = 1; level <= 10; level++)
             stats[course][level] = CourseStats{};
 
-    for (const auto& sibling : fs::directory_iterator(path)) {
-        if (!fs::is_directory(sibling) || sibling.path() == path) continue;
+    // Wait for the scan without joining its thread (the loader does that)
+    while (!song_files_ready.load() && !abort_loading.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    if (!song_files_ready.load()) return stats;
 
-        for (const auto& entry : fs::recursive_directory_iterator(sibling)) {
-            if (!is_song_file(entry.path())) continue;
+    // Songs below a folder of `path` (not files directly in it), as the directory walk counted them
+    for (const auto& [path_str, levels] : song_levels) {
+        fs::path song_path(path_str);
+        fs::path rel = song_path.lexically_relative(path);
+        if (rel.empty() || *rel.begin() == ".." || std::distance(rel.begin(), rel.end()) < 2) continue;
 
-            const auto& hashes = scores_manager.get_hashes(entry.path());
+        const auto& hashes = scores_manager.get_hashes(song_path);
+        for (int course = 0; course <= 4; course++) {
+            int level = levels[course];
+            if (level < 1 || level > 10) continue;
 
-            SongParser parser(entry.path());
-            parser.get_metadata();
+            CourseStats& cs = stats[course][level];
+            cs.total++;
 
-            for (const auto& [course, data] : parser.metadata.course_data) {
-                if (course < 0 || course > 4) continue;
-                int level = static_cast<int>(data.level);
-                if (level < 1 || level > 10) continue;
+            const std::string& hash = hashes[course];
+            if (hash.empty()) continue;
 
-                CourseStats& cs = stats[course][level];
-                cs.total++;
+            auto score = scores_manager.get_score(hash, course, scores_manager.player_1);
+            if (!score.has_value()) continue;
 
-                std::string hash = hashes[course];
-                if (hash.empty()) continue;
-
-                auto score = scores_manager.get_score(hash, course, scores_manager.player_1);
-                if (!score.has_value()) continue;
-
-                cs.add_score(*score);
-            }
+            cs.add_score(*score);
         }
     }
-
     return stats;
 }
 
@@ -2556,22 +2752,30 @@ std::optional<fs::path> Navigator::find_song_by_title(const std::string& title, 
     std::string norm_subtitle = normalize_title(subtitle);
     if (norm_title.empty()) return std::nullopt;   // nothing to match on
 
-    for (auto& [key, path] : song_files) {
-        if (normalize_title(key.first) == norm_title &&
-            normalize_title(key.second) == norm_subtitle) {
-            return path;
+    std::lock_guard<std::mutex> lock(title_index_mutex);
+    if (title_index_size != song_files.size()) {
+        // First match in song_files order wins, as with the linear scans this replaced
+        title_subtitle_index.clear();
+        title_only_index.clear();
+        normalized_titles.clear();
+        normalized_titles.reserve(song_files.size());
+        for (auto& [key, path] : song_files) {
+            std::string t = normalize_title(key.first);
+            title_subtitle_index.emplace(t + '\x1f' + normalize_title(key.second), path);
+            title_only_index.emplace(t, path);
+            normalized_titles.emplace_back(std::move(t), path);
         }
+        title_index_size = song_files.size();
     }
+
+    if (auto it = title_subtitle_index.find(norm_title + '\x1f' + norm_subtitle); it != title_subtitle_index.end())
+        return it->second;
 
     // Fallback: title only
-    for (auto& [key, path] : song_files) {
-        if (normalize_title(key.first) == norm_title) {
-            return path;
-        }
-    }
+    if (auto it = title_only_index.find(norm_title); it != title_only_index.end())
+        return it->second;
 
-    for (auto& [key, path] : song_files) {
-        std::string indexed_title = normalize_title(key.first);
+    for (auto& [indexed_title, path] : normalized_titles) {
 
         // Check if norm_title is inside indexed_title or vice-versa
         if (indexed_title.find(norm_title) != std::string::npos ||

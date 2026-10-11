@@ -154,12 +154,37 @@ std::filesystem::path win32_get_executable_dir() {
     return exe_path.parent_path();
 }
 
+// Plain sleeps (Sleep, std::this_thread::sleep_*) round up to the ~15.6 ms system tick, and on
+// Windows 11 timeBeginPeriod no longer changes that for us; a high-resolution waitable timer wakes
+// within a fraction of a millisecond.
+bool win32_precise_sleep_us(long long us) {
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer) return false;
+    LARGE_INTEGER due;
+    due.QuadPart = -us * 10;   // relative, in 100 ns units
+    if (!SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) return false;
+    WaitForSingleObject(timer, INFINITE);
+    return true;
+}
+
+void win32_lower_thread_priority() {
+    // Not THREAD_MODE_BACKGROUND_BEGIN: its low I/O priority made a full skin check several times slower
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+}
+
 void win32_install_crash_handlers() {
     std::signal(SIGINT, [](int) { std::_Exit(0); });
     SetUnhandledExceptionFilter(crash_exception_filter);
 }
 
 bool win32_is_key_down_native(int raylib_key) {
+    DWORD fg_pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &fg_pid);
+    if (fg_pid != GetCurrentProcessId()) return false;
+
     int vk_code = 0;
 
     // Handle letters (A-Z)
@@ -249,7 +274,6 @@ bool win32_is_key_down_native(int raylib_key) {
 
     if (vk_code == 0) return false;
 
-    // Note: Window focus check should be done by caller if needed
     return (GetAsyncKeyState(vk_code) & 0x8000) != 0;
 }
 
@@ -264,8 +288,78 @@ std::string win32_path_to_string(const std::filesystem::path& path) {
     return path.string(); // fallback
 }
 
+bool win32_list_dir(const std::filesystem::path& dir, std::vector<Win32DirEntry>& out) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW((dir.wstring() + L"\\*").c_str(), FindExInfoBasic, &fd,
+                                FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        const wchar_t* n = fd.cFileName;
+        if (n[0] == L'.' && (n[1] == L'\0' || (n[1] == L'.' && n[2] == L'\0'))) continue;
+        Win32DirEntry e;
+        e.name = n;
+        e.is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        e.is_reparse = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        out.push_back(std::move(e));
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return true;
+}
+
+std::wstring win32_final_path(const std::filesystem::path& path) {
+    HANDLE h = CreateFileW(path.wstring().c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    std::wstring result(MAX_PATH, L'\0');
+    DWORD len = GetFinalPathNameByHandleW(h, result.data(), static_cast<DWORD>(result.size()), FILE_NAME_NORMALIZED);
+    if (len >= result.size()) {
+        result.resize(len);
+        len = GetFinalPathNameByHandleW(h, result.data(), static_cast<DWORD>(result.size()), FILE_NAME_NORMALIZED);
+    }
+    CloseHandle(h);
+    if (len == 0 || len >= result.size()) return {};
+    result.resize(len);
+    return result;
+}
+
 // PortAudio WDM-KS backend
 static PaStream* g_pa_stream = nullptr;
+
+static PaDeviceIndex find_pa_device_by_name(PaHostApiIndex host_index, const std::string& device_name) {
+    const PaHostApiInfo* host_info = Pa_GetHostApiInfo(host_index);
+    if (!host_info || device_name.empty()) return paNoDevice;
+    int num_devices = Pa_GetDeviceCount();
+    for (int i = 0; i < num_devices; i++) {
+        const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
+        if (!info || !info->name) continue;
+        if (info->hostApi == host_index && device_name == info->name) return i;
+    }
+    return paNoDevice;
+}
+
+std::vector<std::string> win32_enumerate_portaudio_devices(int host_api_type) {
+    std::vector<std::string> names;
+    PaError err = Pa_Initialize();
+    if (err != paNoError) {
+        spdlog::warn("Failed to initialize PortAudio for enumeration: {}", Pa_GetErrorText(err));
+        return names;
+    }
+    PaHostApiIndex host_index = Pa_HostApiTypeIdToHostApiIndex((PaHostApiTypeId)host_api_type);
+    if (host_index >= 0) {
+        const PaHostApiInfo* host_info = Pa_GetHostApiInfo(host_index);
+        if (host_info) {
+            int num_devices = Pa_GetDeviceCount();
+            for (int i = 0; i < num_devices; i++) {
+                const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
+                if (!info || !info->name) continue;
+                if (info->hostApi == host_index && info->maxOutputChannels > 0)
+                    names.emplace_back(info->name);
+            }
+        }
+    }
+    Pa_Terminate();
+    return names;
+}
 
 int pa_stream_callback(const void* /*inputBuffer*/, void* outputBuffer,
                        unsigned long framesPerBuffer,
@@ -280,7 +374,7 @@ int pa_stream_callback(const void* /*inputBuffer*/, void* outputBuffer,
     return paContinue;
 }
 
-bool win32_init_portaudio_wdmks(double target_sample_rate, unsigned long buffer_size) {
+bool win32_init_portaudio_wdmks(double target_sample_rate, unsigned long buffer_size, const std::string& device_name) {
     PaError err = Pa_Initialize();
     if (err != paNoError) {
         spdlog::error("Failed to initialize PortAudio: {}", Pa_GetErrorText(err));
@@ -301,8 +395,15 @@ bool win32_init_portaudio_wdmks(double target_sample_rate, unsigned long buffer_
         return false;
     }
 
+    PaDeviceIndex device = host_info->defaultOutputDevice;
+    if (!device_name.empty()) {
+        PaDeviceIndex matched = find_pa_device_by_name(host_index, device_name);
+        if (matched != paNoDevice) device = matched;
+        else spdlog::warn("Requested audio device '{}' not found; using default", device_name);
+    }
+
     PaStreamParameters out_params{};
-    out_params.device                    = host_info->defaultOutputDevice;
+    out_params.device                    = device;
     out_params.channelCount              = 2;
     out_params.sampleFormat              = paFloat32;
     out_params.suggestedLatency          = Pa_GetDeviceInfo(out_params.device)->defaultLowOutputLatency;
@@ -337,7 +438,7 @@ bool win32_init_portaudio_wdmks(double target_sample_rate, unsigned long buffer_
     return true;
 }
 
-bool win32_init_portaudio_mme(double target_sample_rate, unsigned long buffer_size) {
+bool win32_init_portaudio_mme(double target_sample_rate, unsigned long buffer_size, const std::string& device_name) {
     PaError err = Pa_Initialize();
     if (err != paNoError) {
         spdlog::error("Failed to initialize PortAudio: {}", Pa_GetErrorText(err));
@@ -358,8 +459,15 @@ bool win32_init_portaudio_mme(double target_sample_rate, unsigned long buffer_si
         return false;
     }
 
+    PaDeviceIndex device = host_info->defaultOutputDevice;
+    if (!device_name.empty()) {
+        PaDeviceIndex matched = find_pa_device_by_name(host_index, device_name);
+        if (matched != paNoDevice) device = matched;
+        else spdlog::warn("Requested audio device '{}' not found; using default", device_name);
+    }
+
     PaStreamParameters out_params{};
-    out_params.device                    = host_info->defaultOutputDevice;
+    out_params.device                    = device;
     out_params.channelCount              = 2;
     out_params.sampleFormat              = paFloat32;
     out_params.suggestedLatency          = Pa_GetDeviceInfo(out_params.device)->defaultLowOutputLatency;

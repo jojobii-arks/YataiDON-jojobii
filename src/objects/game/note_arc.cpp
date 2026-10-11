@@ -7,8 +7,10 @@ NoteArc::NoteArc(NoteType note_type, double current_ms, PlayerNum player_num, bo
     : note_type(note_type), start_ms(current_ms), player_num(player_num), is_big(big), is_balloon(is_balloon)
 {
     arc_points = 100;
-    arc_duration = 22;
+    arc_duration = 28;
     current_progress = 0;
+    elapsed_ms = 0;
+    note_finished_handled = false;
 
     float curve_height = tex.skin_config[SC::NOTE_ARC_CURVE_HEIGHT].height;
     this->start_x = start_x + tex.skin_config[SC::NOTE_ARC_START_X_OFFSET].x;
@@ -41,15 +43,15 @@ NoteArc::NoteArc(NoteType note_type, double current_ms, PlayerNum player_num, bo
         arc_points_list.reserve(arc_points + 1);
 
         for (int i = 0; i <= arc_points; ++i) {
-            float t = static_cast<float>(i) / arc_points;
+            float t = (float)i / arc_points;
             float t_inv = 1.0f - t;
 
-            int x = static_cast<int>(t_inv * t_inv * this->start_x +
-                                     2 * t_inv * t * control_x +
-                                     t * t * end_x);
-            int y = static_cast<int>(t_inv * t_inv * this->start_y +
-                                     2 * t_inv * t * control_y +
-                                     t * t * end_y);
+            int x = (int)(t_inv * t_inv * this->start_x +
+                          2 * t_inv * t * control_x +
+                          t * t * end_x);
+            int y = (int)(t_inv * t_inv * this->start_y +
+                          2 * t_inv * t * control_y +
+                          t * t * end_y);
 
             arc_points_list.emplace_back(x, y);
         }
@@ -59,18 +61,38 @@ NoteArc::NoteArc(NoteType note_type, double current_ms, PlayerNum player_num, bo
 
     arc_points_cache = &_arc_points_cache[cache_key];
 
-    t_note = tex.get_texture("notes/" + std::to_string((int)note_type));
+    NoteType texture_note_type = note_type;
+    if (big) {
+        if (note_type == NoteType::DON) {
+            texture_note_type = NoteType::DON_L;
+        } else if (note_type == NoteType::KAT) {
+            texture_note_type = NoteType::KAT_L;
+        }
+    }
+    if (note_type == NoteType::BALLOON_HEAD || is_balloon) {
+        texture_note_type = NoteType::DON_L;
+    }
+    t_note = tex.get_texture("notes/" + std::to_string((int)texture_note_type));
+    if (big) {
+        t_firework = tex.get_texture("hit_effect/firework");
+    }
     t_rainbow_mask = tex.get_texture("balloon/rainbow_mask");
 }
 
-void NoteArc::update(double current_ms) {
-    double elapsed_time = (current_ms - start_ms) / 16.67;
-    elapsed_time = std::max(0.0, std::min(elapsed_time, (double)arc_duration));
+// cropped sheets are a single texture, so frame_count() alone reports 1
+int NoteArc::firework_frames() const {
+    int n = t_firework->frame_count();
+    if (t_firework->crop_data.has_value()) n = std::max(n, (int)t_firework->crop_data->size());
+    return n;
+}
 
-    current_progress = elapsed_time / arc_duration;
+void NoteArc::update(double current_ms) {
+    // elapsed_ms keeps running past the arc so trailing fireworks can finish
+    elapsed_ms = std::max(0.0, current_ms - start_ms);
+    current_progress = std::min(1.0, elapsed_ms / ((double)arc_duration * 16.67));
 
     if (arc_points_cache == nullptr || arc_points_cache->empty()) return;
-    const std::size_t point_index = static_cast<std::size_t>(current_progress * arc_points);
+    const std::size_t point_index = (std::size_t)(current_progress * arc_points);
     if (point_index < arc_points_cache->size()) {
         x_i = (*arc_points_cache)[point_index].first;
         y_i = (*arc_points_cache)[point_index].second;
@@ -84,7 +106,7 @@ void NoteArc::draw(float y, ray::Shader mask_shader) {
     if (is_balloon) {
         const std::shared_ptr<TextureObject>& rainbow = tex.textures["balloon/rainbow"];
         if (!rainbow || !t_rainbow_mask) {
-            tex.draw_texture(t_note, {.x=x_i, .y=y + y_i});
+            if (current_progress < 1.0) tex.draw_texture(t_note, {.x=x_i, .y=y + y_i});
             return;
         }
         float rainbow_height;
@@ -94,8 +116,9 @@ void NoteArc::draw(float y, ray::Shader mask_shader) {
             rainbow_height = t_rainbow_mask->height;
         }
         float trail_length_ratio = 0.5f;
-        float trail_start_progress = std::max(0.0f, current_progress - trail_length_ratio);
-        float trail_end_progress = current_progress;
+        const float raw_progress = elapsed_ms / ((double)arc_duration * 16.67);
+        float trail_start_progress = std::max(0.0f, raw_progress - trail_length_ratio);
+        float trail_end_progress = std::min(raw_progress, 1.0f);
 
         if (trail_end_progress > trail_start_progress) {
             float crop_start_x = std::round(trail_start_progress * t_rainbow_mask->width);
@@ -112,14 +135,59 @@ void NoteArc::draw(float y, ray::Shader mask_shader) {
                     y_pos = 0;
                 }
                 ray::BeginShaderMode(mask_shader);
+                // rlgl clears the extra sampler slots after every batch, so GameScreen's one-time
+                // binding of texture1 (the rainbow's colours) only lasted for the first batch; after
+                // that the shader sampled an empty unit and the trail came out opaque black
+                if (const ray::Texture2D* rt = rainbow->frame_texture(0)) {
+                    ray::SetShaderValueTexture(mask_shader, ray::GetShaderLocation(mask_shader, "texture1"), *rt);
+                }
                 tex.draw_texture(t_rainbow_mask, {.mirror=mirror, .x=crop_start_x, .y=y + y_pos, .x2=-t_rainbow_mask->width + crop_width, .src=src});
                 ray::EndShaderMode();
             }
         }
+    } else if (is_big && !is_balloon && t_firework && firework_frames() > 0 &&
+               arc_points_cache && !arc_points_cache->empty()) {
+        const double interval = 28.0;
+        const double duration = 16.67;
+        const int frame_count = firework_frames();
+        const int spawn_count = (int)(
+            std::min(elapsed_ms, (double)arc_duration * 16.67) / interval) + 1;
+
+        for (int i = 1; i < spawn_count; ++i) {
+            const double spawn_ms = i * interval;
+            const double age_ms = elapsed_ms - spawn_ms;
+            const int frame = (int)(age_ms / duration);
+            if (frame < 0 || frame >= frame_count) continue;
+            const double position_progress = std::min(spawn_ms / ((double)arc_duration * 16.67), 1.0);
+            const std::size_t point_index = std::min((std::size_t)(position_progress * arc_points),arc_points_cache->size() - 1);
+            const float firework_x = (float)((*arc_points_cache)[point_index].first);
+            const float firework_y = (float)((*arc_points_cache)[point_index].second);
+            tex.draw_texture(t_firework, {
+                .frame=frame,
+                .scale = 0.8,
+                .x=firework_x - (t_note->width*0.6f) / 2.0f,
+                .y=y + firework_y - (t_note->width*0.6f) / 2.0f
+            });
+        }
     }
-    tex.draw_texture(t_note, {.x=x_i, .y=y + y_i});
+    if (!is_note_finished()) {
+        tex.draw_texture(t_note, {.x=x_i, .y=y + y_i});
+    }
 }
 
 bool NoteArc::is_finished() const {
+    double end_ms = (double)arc_duration * 16.67;
+    if (is_balloon) end_ms *= 1.5;
+    if (t_firework) end_ms += firework_frames() * 16.67;
+    return elapsed_ms >= end_ms;
+}
+
+bool NoteArc::is_note_finished() const {
     return current_progress >= 1.0;
+}
+
+bool NoteArc::consume_note_finished() {
+    if (note_finished_handled || !is_note_finished()) return false;
+    note_finished_handled = true;
+    return true;
 }

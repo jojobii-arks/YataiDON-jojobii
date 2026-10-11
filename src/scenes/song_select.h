@@ -43,6 +43,9 @@ protected:
     std::pair<int,int> last_diff_sort = {-1, -1};
     int last_diff_order = 1;
     void apply_sort_window_result();
+    void update_selection_ui(double current_time, bool advance_timers);
+    void update_diff_sort(double current_time);
+    void start_search();
 
     std::optional<TierSortSelect> tier_sort_selector;
     std::pair<int, std::string> last_tier_sort = {0, ""};

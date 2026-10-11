@@ -39,7 +39,9 @@ void SongSelectPlayer::try_lua_selector(bool is_half, float fade_in, int pass) {
 SongSelectPlayer::SongSelectPlayer(PlayerNum player_num)
     : player_num(player_num)
 {
-    int player_id = (player_num == global_data.first_login_player) ? global_data.config->general.player_1_id : global_data.config->general.player_2_id;
+    std::string player_id = (player_num == global_data.first_login_player)
+        ? global_data.config->network.access_code_1
+        : global_data.config->network.access_code_2;
     if (auto p = scores_manager.get_player_data(player_id))
         player_data = *p;
 
@@ -56,11 +58,11 @@ SongSelectPlayer::SongSelectPlayer(PlayerNum player_num)
     last_moved = 0;
 
     chara = make_chara_from_player_data(&player_data, player_num == PlayerNum::P2);
-    if (player_data.player_id > 0) {
+    if (!player_data.player_id.empty()) {
         chara->set_don_colors(player_data.chara_color_1, player_data.chara_color_2, player_data.chara_color_3);
         chara->apply_face(player_data.chara_face_index);
     } else {
-        chara->set_don_colors(chara_default_color_1(player_id), chara_default_color_2(player_id), {249, 240, 225, 255});
+        chara->set_don_colors(chara_default_color_1(player_num), chara_default_color_2(player_num), {249, 240, 225, 255});
     }
     chara->set_anim(AnimIndex::DON_SELECT_LOOP);
 
@@ -113,7 +115,7 @@ void SongSelectPlayer::update(double current_time) {
         }
     }
     if (ura_switch.has_value()) ura_switch->update(current_time);
-    if (voice_played && !is_voice_playing()) {
+    if (voice_played && (global_data.config->general.fast_transitions || !is_voice_playing())) {
         is_ready = true;
     }
 }
@@ -346,50 +348,17 @@ std::optional<std::string> SongSelectPlayer::handle_input_search() {
             search_guard = false;
         return std::nullopt;
     }
-    // Ctrl+V pastes the clipboard (first line only, UTF-8 as raylib hands it over).
-    if ((ray::IsKeyDown(ray::KEY_LEFT_CONTROL) || ray::IsKeyDown(ray::KEY_RIGHT_CONTROL)) && ray::IsKeyPressed(ray::KEY_V)) {
-        const char* clip = ray::GetClipboardText();
-        if (clip) {
-            std::string s(clip);
-            const size_t eol = s.find_first_of("\r\n");
-            if (eol != std::string::npos) s.resize(eol);
-            search_string += s;
-        }
-        while (ray::GetCharPressed() > 0) {}   // the 'v' itself is not typed
-        return std::nullopt;
-    }
-    if (ray::IsKeyPressed(ray::KEY_BACKSPACE)) {
-        // Remove one whole UTF-8 code point (continuation bytes first, then the lead byte).
-        while (!search_string.empty() && ((unsigned char)search_string.back() & 0xC0) == 0x80)
-            search_string.pop_back();
-        if (!search_string.empty())
-            search_string.pop_back();
-    } else if (ray::IsKeyPressed(ray::KEY_ENTER)
+
+    TextEditAction action = poll_text_edit(search_string);
 #if defined(PLATFORM_ANDROID) || defined(YATAIDON_PLATFORM_IOS)
-               || is_l_don_pressed(player_num) || is_r_don_pressed(player_num)
+    if (action == TextEditAction::None && (is_l_don_pressed(player_num) || is_r_don_pressed(player_num)))
+        action = TextEditAction::Confirm;
 #endif
-    ) {
-        std::string result = trim_search(search_string);
+    if (action == TextEditAction::Confirm || action == TextEditAction::Cancel) {
+        std::string result = action == TextEditAction::Confirm ? trim_search(search_string) : "";
         search_string = "";
         clear_input_buffers();
         return result;
-    }
-
-    int key = ray::GetCharPressed();
-    while (key > 0) {
-        if (key == '\n' || key == '\r') {
-            std::string result = trim_search(search_string);
-            search_string = "";
-            clear_input_buffers();
-            return result;
-        }
-        // GetCharPressed yields a Unicode code point (IME-composed CJK included); store it as UTF-8.
-        if (key >= 0x20) {
-            int n = 0;
-            const char* utf8 = ray::CodepointToUTF8(key, &n);
-            search_string.append(utf8, n);
-        }
-        key = ray::GetCharPressed();
     }
     return std::nullopt;
 }

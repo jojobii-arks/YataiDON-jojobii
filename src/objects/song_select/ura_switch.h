@@ -1,20 +1,15 @@
 #pragma once
 
-#include "../../libs/animation.h"
+#include "../../libs/script.h"
 
-#include "../../libs/texture.h"
-
-class UraSwitchAnimation {
+class UraSwitchAnimation : public LuaScript {
 private:
-    TextureChangeAnimation* texture_change;
-    FadeAnimation* fade_out;
-    TextureObject* t_ura_switch = nullptr;
+    sol::protected_function fn_start, fn_update, fn_draw;
+
 public:
     UraSwitchAnimation();
 
     void start(bool is_backwards);
-
     void update(double current_ms);
-
     void draw();
 };

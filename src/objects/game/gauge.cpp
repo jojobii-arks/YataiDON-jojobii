@@ -24,36 +24,6 @@ Gauge::Gauge(int total_notes, int difficulty, int level, PlayerNum player_num)
     if (!tamashii_fire_change || !gauge_update_anim) {
         throw std::runtime_error("Gauge: animation 25 or 10 is missing/has unexpected type");
     }
-
-    const std::string p = std::to_string((int)player_num) + "p_";
-    t_border = tex.get_texture("gauge/border" + string_diff);
-    t_unfilled = tex.get_texture("gauge/" + p + "unfilled" + string_diff);
-    t_bar = tex.get_texture("gauge/" + p + "bar");
-    t_bar_clear_transition = tex.get_texture("gauge/bar_clear_transition");
-    t_bar_clear_top = tex.get_texture("gauge/bar_clear_top");
-    t_bar_clear_bottom = tex.get_texture("gauge/bar_clear_bottom");
-    t_rainbow = tex.get_texture("gauge/rainbow" + string_diff);
-    t_bar_clear_transition_fade = tex.get_texture("gauge/bar_clear_transition_fade");
-    t_bar_clear_fade = tex.get_texture("gauge/bar_clear_fade");
-    t_bar_fade = tex.get_texture("gauge/" + p + "bar_fade");
-    t_overlay = tex.get_texture("gauge/overlay" + string_diff);
-    t_tamashii_fire = tex.get_texture("gauge/tamashii_fire");
-    t_tamashii = tex.get_texture("gauge/tamashii");
-    t_tamashii_overlay = tex.get_texture("gauge/tamashii_overlay");
-    t_tamashii_dark = tex.get_texture("gauge/tamashii_dark");
-
-    t_dan_bar = tex.get_texture("gauge_dan/" + p + "bar");
-    t_dan_bar_fade = tex.get_texture("gauge_dan/" + p + "bar_fade");
-    t_dan_border = tex.get_texture("gauge_dan/border");
-    t_dan_unfilled = tex.get_texture("gauge_dan/" + p + "unfilled");
-    t_dan_rainbow = tex.get_texture("gauge_dan/rainbow");
-    t_dan_overlay = tex.get_texture("gauge_dan/overlay");
-    t_dan_tamashii_fire = tex.get_texture("gauge_dan/tamashii_fire");
-    t_dan_tamashii = tex.get_texture("gauge_dan/tamashii");
-    t_dan_tamashii_overlay = tex.get_texture("gauge_dan/tamashii_overlay");
-    t_dan_tamashii_dark = tex.get_texture("gauge_dan/tamashii_dark");
-    t_clear = tex.get_texture("gauge/clear_" + global_data.config->general.language);
-    t_clear_dark = tex.get_texture("gauge/clear_dark_" + global_data.config->general.language);
 }
 
 Gauge Gauge::dan(const std::vector<DanSongEntry>& songs, int total_notes, PlayerNum player_num) {
@@ -137,166 +107,17 @@ void Gauge::update(double current_ms) {
 }
 
 void Gauge::draw(float y) {
-    if (dan_mode) { draw_dan(); return; }
-    bool mirrored = y > tex.screen_height / 2.0f;
-    Mirror mirror = mirrored ? Mirror::VERTICAL : Mirror::NONE;
-
-    tex.draw_texture(t_border, {.mirror = mirror, .y = y, .index = mirrored});
-
-    tex.draw_texture(t_unfilled, {.mirror = mirror, .y = y, .index = mirrored});
-
-    const SkinInfo* cells_cfg = tex.skin_entry("gauge_cells");
-    const int bar_units = (cells_cfg && cells_cfg->x > 0) ? (int)std::lround(cells_cfg->x) : 87;
-
-    // explicit floor: points is now double, so the truncation would otherwise be an implicit narrowing
-    int gauge_length_int = (int)std::floor(points * bar_units / max_points);
-    int previous_length_int = (int)std::floor(previous_points * bar_units / max_points);
-
-    int clear_point = std::clamp(clear_points * bar_units / max_points, 1, bar_units);
-    const float bar_width = t_bar->width;
-
-    const bool cell_fade_in = tex.options[SCO::GAUGE_CELL_FADE_IN];
-    const bool cell_pending = gauge_length_int <= bar_units && gauge_length_int > previous_length_int
-                              && gauge_update_anim && gauge_update_anim->is_started && !gauge_update_anim->is_finished;
-    const int  solid_length = (cell_fade_in && cell_pending) ? gauge_length_int - 1 : gauge_length_int;
-    const float anim_alpha  = gauge_update_anim ? (float)gauge_update_anim->attribute : 0.0f;
-    const float cell_alpha  = cell_fade_in ? 1.0f - anim_alpha : anim_alpha;
-
-    if (solid_length > 0)
-        tex.draw_texture(t_bar,
-                          {.y = y, .x2 = std::min(solid_length * bar_width, (clear_point - 1) * bar_width) - bar_width, .index = mirrored});
-
-    // The transition piece is the first gold cell (index clear_point-1, the rounded
-    // cap of the clear zone). Light it exactly when the gauge is cleared: on grids
-    // where clear_points falls mid-cell (87 cells: 8000 -> 69.6) a cell-count test
-    // lights it up to a cell early or late relative to the クリア state.
-    const bool clear_cap_lit = get_is_clear() && !(cell_fade_in && cell_pending && gauge_length_int == clear_point);
-    if (clear_cap_lit)
-        tex.draw_texture(t_bar_clear_transition,
-                          {.mirror = mirror, .x = (clear_point - 1) * bar_width, .y = y, .index = mirrored});
-
-    // Gold zone = cells clear_point .. solid_length-1. The piece texture is already one
-    // cell wide, so the stretch is (cells - 1) * bar_width, like the red bar above;
-    // without the -bar_width the strip ran one cell ahead of the fill.
-    if (solid_length > clear_point) {
-        const float gold_x2 = (solid_length - clear_point) * bar_width - bar_width;
-        tex.draw_texture(t_bar_clear_top,
-                          {.mirror = mirror, .x = clear_point * bar_width, .y = y,
-                           .x2 = gold_x2, .index = mirrored});
-        tex.draw_texture(t_bar_clear_bottom,
-                          {.x = clear_point * bar_width, .y = y,
-                           .x2 = gold_x2, .index = mirrored});
+    if (!lua_tried) {
+        lua_tried = true;
+        if (load("Gauge", "gauge", player_num == PlayerNum::P2, dan_mode, string_diff))
+            fn_draw = lua_object["draw"];
+        else
+            spdlog::error("Gauge: game/gauge.lua failed to load, gauge will not be drawn");
     }
-
-    if (get_is_rainbow() && rainbow_fade_in.has_value()) {
-        float fade    = rainbow_fade_in.value()->attribute;
-        int   frame_a = (int)rainbow_frac % 8;
-        int   frame_b = (frame_a + 1) % 8;
-        float t       = rainbow_frac - (int)rainbow_frac;
-        tex.draw_texture(t_rainbow,
-                          {.frame = frame_a, .mirror = mirror, .y = y, .fade = fade, .index = mirrored});
-        tex.draw_texture(t_rainbow,
-                          {.frame = frame_b, .mirror = mirror, .y = y, .fade = fade * t, .index = mirrored});
-    }
-
-    // Flash mode: the sprite fades out over the solid cell. Fade-in mode: it IS the
-    // cell while the animation runs, and must vanish once the solid bar takes over
-    // (otherwise it stays at full alpha on the last cell — visible in the gold zone
-    // and over the rainbow).
-    const bool show_gauge_up = cell_fade_in ? cell_pending
-                                            : (gauge_length_int <= bar_units && gauge_length_int > previous_length_int);
-    if (show_gauge_up) {
-        // The gauge-up sprite belongs on the cell that was just filled (index
-        // gauge_length_int - 1), not on the empty cell after it.
-        const float fade_x = (gauge_length_int - 1) * bar_width;
-        if (gauge_length_int == clear_point) {
-            tex.draw_texture(t_bar_clear_transition_fade,
-                              {.mirror = mirror, .x = fade_x, .y = y,
-                               .fade = cell_alpha, .index = mirrored});
-        } else if (gauge_length_int > clear_point) {
-            tex.draw_texture(t_bar_clear_fade,
-                              {.x = fade_x, .y = y,
-                               .fade = cell_alpha, .index = mirrored});
-        } else {
-            tex.draw_texture(t_bar_fade,
-                              {.x = fade_x, .y = y,
-                               .fade = cell_alpha, .index = mirrored});
-        }
-    }
-
-    tex.draw_texture(t_overlay,
-                      {.mirror = mirror, .y = y, .fade = 0.15f, .index = mirrored});
-
-    // クリア label / 魂 light up with the cleared state itself, and the label frame
-    // follows the clear-zone art tier (easy / normal+hard / oni), not the raw difficulty.
-    const int art_tier = (string_diff == "_easy") ? 0 : (string_diff == "_normal") ? 1 : 2;
-    if (get_is_clear()) {
-        tex.draw_texture(t_clear, {.y = y, .index = art_tier + (mirrored * 3)});
-        if (get_is_rainbow()) {
-            tex.draw_texture(t_tamashii_fire,
-                              {.frame = tamashii_fire_change ? (int)tamashii_fire_change->attribute : 0, .scale = 0.75f,
-                               .center = true, .y = y, .index = mirrored});
-        }
-        tex.draw_texture(t_tamashii, {.y = y, .index = mirrored});
-        int fire_frame = tamashii_fire_change ? (int)tamashii_fire_change->attribute : 0;
-        if (get_is_rainbow() && (fire_frame == 0 || fire_frame == 1 || fire_frame == 4 || fire_frame == 5))
-            tex.draw_texture(t_tamashii_overlay, {.y = y, .fade = 0.5f, .index = mirrored});
-    } else {
-        tex.draw_texture(t_clear_dark, {.y = y, .index = art_tier + (mirrored * 3)});
-        tex.draw_texture(t_tamashii_dark, {.y = y, .index = mirrored});
-    }
-}
-
-// The dan gauge lives at the absolute positions of game/gauge_dan/texture.json, so it
-// takes no lane offset; the fill is one bar-texture-width per cell like the normal gauge.
-void Gauge::draw_dan() {
-    TextureObject* const bar_id  = t_dan_bar;
-    TextureObject* const fade_id = t_dan_bar_fade;
-    tex.draw_texture(t_dan_border, {});
-    tex.draw_texture(t_dan_unfilled, {});
-
-    const SkinInfo* cells_cfg = tex.skin_entry("gauge_cells");
-    const int bar_units = (cells_cfg && cells_cfg->x > 0) ? (int)std::lround(cells_cfg->x) : 87;
-
-    // explicit floor: points is now double, so the truncation would otherwise be an implicit narrowing
-    const int gauge_length_int    = (int)std::floor(points * bar_units / max_points);
-    const int previous_length_int = (int)std::floor(previous_points * bar_units / max_points);
-
-    const float bar_width = bar_id->width;
-
-    const bool cell_fade_in = tex.options[SCO::GAUGE_CELL_FADE_IN];
-    const bool cell_pending = gauge_length_int <= bar_units && gauge_length_int > previous_length_int
-                              && gauge_update_anim && gauge_update_anim->is_started && !gauge_update_anim->is_finished;
-    const int  solid_length = (cell_fade_in && cell_pending) ? gauge_length_int - 1 : gauge_length_int;
-    const float anim_alpha  = gauge_update_anim ? (float)gauge_update_anim->attribute : 0.0f;
-    const float cell_alpha  = cell_fade_in ? 1.0f - anim_alpha : anim_alpha;
-
-    if (solid_length > 0)
-        tex.draw_texture(bar_id, {.x2 = solid_length * bar_width - bar_width});
-
-    if (get_is_rainbow() && rainbow_fade_in.has_value()) {
-        const float fade = rainbow_fade_in.value()->attribute;
-        const int frame_a = (int)rainbow_frac % 8;
-        const int frame_b = (frame_a + 1) % 8;
-        const float t = rainbow_frac - (int)rainbow_frac;
-        tex.draw_texture(t_dan_rainbow, {.frame = frame_a, .fade = fade});
-        tex.draw_texture(t_dan_rainbow, {.frame = frame_b, .fade = fade * t});
-    }
-
-    const bool show_gauge_up = cell_fade_in ? cell_pending
-                                            : (gauge_length_int <= bar_units && gauge_length_int > previous_length_int);
-    if (show_gauge_up && gauge_length_int > 0)
-        tex.draw_texture(fade_id, {.x = (gauge_length_int - 1) * bar_width, .fade = cell_alpha});
-
-    tex.draw_texture(t_dan_overlay, {.fade = 0.15f});
-
-    if (get_is_rainbow()) {
-        const int f = tamashii_fire_change ? (int)tamashii_fire_change->attribute : 0;
-        tex.draw_texture(t_dan_tamashii_fire, {.frame = f, .scale = 0.75f, .center = true});
-        tex.draw_texture(t_dan_tamashii, {});
-        if (f == 0 || f == 1 || f == 4 || f == 5)
-            tex.draw_texture(t_dan_tamashii_overlay, {.fade = 0.5f});
-    } else {
-        tex.draw_texture(t_dan_tamashii_dark, {});
-    }
+    const bool anim_active = gauge_update_anim && gauge_update_anim->is_started && !gauge_update_anim->is_finished;
+    const float anim_alpha = gauge_update_anim ? (float)gauge_update_anim->attribute : 0.0f;
+    const float rainbow_fade = rainbow_fade_in.has_value() ? (float)rainbow_fade_in.value()->attribute : -1.0f;
+    const int fire_frame = tamashii_fire_change ? (int)tamashii_fire_change->attribute : 0;
+    call(fn_draw, "Gauge:draw", y, points, previous_points, max_points, clear_points,
+         get_is_clear(), get_is_rainbow(), anim_active, anim_alpha, rainbow_fade, rainbow_frac, fire_frame);
 }

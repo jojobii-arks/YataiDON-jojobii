@@ -15,6 +15,7 @@
 #endif
 #endif
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -36,6 +37,17 @@ struct RemoteScore {
     Score score;
 };
 
+// Everything GET /user returns about a player; each field is set only if the server sent it
+struct RemoteUser {
+    std::optional<std::string> username;
+    std::optional<std::string> title;
+    std::optional<int> title_bg;
+    std::optional<std::array<ray::Color, 3>> chara_colors;
+    struct Costume { int head_index, body_index, cos_index; bool is_costume; };
+    std::optional<Costume> costume;
+    bool import_requested = false;
+};
+
 struct ReplayData {
     bool ok = false;
     std::string hash;
@@ -46,6 +58,12 @@ struct ReplayData {
 
 std::string modifiers_to_json(const Modifiers& modifiers);
 
+#if defined(NETWORK_ENABLED) && defined(__ANDROID__)
+// Android CA bundle (bundled Mozilla cacert.pem) as cpr SSL options. Exposed
+// so the platform skin updater trusts the same roots as the rest of the client.
+cpr::SslOptions android_ca();
+#endif
+
 class NetworkClient {
 public:
     void update(double current_ms);
@@ -53,7 +71,7 @@ public:
     bool is_online() const { return online; }
     bool is_outdated() const { return outdated; }
 
-    std::string register_user(const std::string& username);
+    std::string register_user(const std::string& username, const std::string& idm = "");
     std::string map_to_json(const std::map<double, InputLogType>& my_map);
     void submit_score(const std::string& hash, int difficulty, const std::string& access_code, const Score& score, const std::map<double, InputLogType>& input_log, int64_t played_at, const std::string& modifiers_json, bool chara_is_costume, int chara_cos_index);
 
@@ -70,11 +88,15 @@ public:
 
     bool fetch_costume(const std::string& access_code, int& head_index, int& body_index, int& cos_index, bool& is_costume);
 
+    // One GET /user for the whole profile. Blocking; safe to call from a worker thread
+    std::optional<RemoteUser> fetch_user(const std::string& access_code);
+
     void check_and_install_android_update();
 
-    void check_android_skin_updates();
-
     bool probe_online();
+    // Non-blocking probe_online: sends a heartbeat now; is_online() updates when it lands
+    void start_probe();
+    bool probing() const { return probing_; }
     void update_costume(const std::string& access_code, int head_index, int body_index, int cos_index, bool is_costume);
 
     void poll_song_jump(const std::string& access_code);
@@ -94,6 +116,7 @@ private:
 
     bool online = false;
     bool outdated = false;
+    bool probing_ = false;
 #if defined(NETWORK_ENABLED)
     std::optional<cpr::AsyncResponse> pending_heartbeat;
     static constexpr double HEARTBEAT_INTERVAL_MS = 30000.0;
@@ -115,8 +138,6 @@ private:
     std::optional<cpr::AsyncResponse> pending_update_apk;
     std::string pending_update_expected_sha256;
     bool android_update_checked = false;
-    std::thread skin_update_thread;
-    std::shared_ptr<std::atomic<bool>> skin_update_done = std::make_shared<std::atomic<bool>>(false);
 #endif
 #endif
 };

@@ -16,6 +16,8 @@
 #include <memory>
 #include <atomic>
 #include <shared_mutex>
+#include <mutex>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -71,6 +73,7 @@ struct sound {
     bool loop = false;                  // Whether to loop the sound
 
     float volume = 1.0f;                // Volume multiplier (0.0 to 1.0+)
+    float playback_gain = 1.0f;
     float pan = 0.5f;                   // Stereo pan (0.0 = left, 0.5 = center, 1.0 = right)
     float pitch = 1.0f;                 // Pitch/speed multiplier (1.0 = normal)
 
@@ -106,6 +109,10 @@ struct music {
     sf_count_t pcm_total_frames = 0;
 };
 
+// Enumerates output device names for the given backend (device_type).
+// Returns an empty list on platforms without device enumeration support.
+std::vector<std::string> enumerate_audio_devices(int device_type);
+
 class AudioEngine {
 public:
     fs::path sounds_path;
@@ -125,15 +132,19 @@ public:
     void unload_sound(const std::string& name);
     void unload_all_sounds();
     void store_sound(const std::string& name, const sound& snd);
-    void play_sound(const std::string& name, VolumePreset volume_preset = VolumePreset::NONE);
+    void play_sound(const std::string& name, VolumePreset volume_preset = VolumePreset::NONE, float gain = 1.0f);
     bool has_sound(const std::string& name);
     void stop_sound(const std::string& name);
     void set_sound_loop(const std::string& name, bool loop);
     bool is_sound_playing(const std::string& name);
+    // times play_sound(name) has been called (a skin can count hits even while the sound
+    // is still playing from the previous one)
+    uint64_t sound_play_count(const std::string& name);
     void  set_sound_volume(const std::string& name, float volume);
     void  set_sound_pan(const std::string& name,   float pan);
     void  set_sound_pitch(const std::string& name, float pitch);
     float get_sound_time_played(const std::string& name) const;
+    float get_sound_time_length(const std::string& name) const;
     void  seek_sound(const std::string& name, float position);
 
     struct PreparedPCM {
@@ -169,11 +180,14 @@ public:
 private:
     double target_sample_rate;
     unsigned long buffer_size;
+    std::string device_name;            // Output device to open (empty = system default)
     std::vector<int> channel_offsets{0};
     unsigned int rt_total_channels = 2;
     VolumeConfig volume_presets;
     bool is_ready;
     mutable std::shared_mutex rw_lock;
+    std::mutex play_count_lock;
+    std::unordered_map<std::string, uint64_t> play_counts;
     std::atomic<float> master_volume;
 
     SDL_AudioStream*   sdl_stream = nullptr;

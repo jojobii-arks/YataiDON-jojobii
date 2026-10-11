@@ -130,6 +130,13 @@ FetchContent_MakeAvailable(lua)
 if(IOS)
   target_compile_definitions(liblua PRIVATE LUA_USE_IOS)
 endif()
+# sol2 prefers <lua/lua.h> over <lua.h>, so a system Lua under e.g.
+# /opt/homebrew/include/lua would shadow the bundled one. Forward those
+# paths to the bundled headers via a dir that precedes system includes.
+foreach(_lua_hdr lua.h lauxlib.h lualib.h lua.hpp luaconf.h)
+  file(WRITE "${CMAKE_BINARY_DIR}/generated/lua/${_lua_hdr}"
+       "#include \"${lua_SOURCE_DIR}/src/${_lua_hdr}\"\n")
+endforeach()
 
 # Sol2
 message(STATUS "Fetching sol2...")
@@ -340,8 +347,6 @@ elseif(EMSCRIPTEN)
   message(STATUS "FFmpeg disabled on Emscripten -- video/av features unavailable until ported")
   foreach(_lib avformat avcodec avutil swscale swresample)
     add_library(FFmpeg::${_lib} INTERFACE IMPORTED)
-    set_target_properties(FFmpeg::${_lib} PROPERTIES
-      INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/libs")
   endforeach()
 elseif(IOS)
   set(IOS_FFMPEG_PREFIX "" CACHE PATH "iOS FFmpeg prefix from tools/build_ffmpeg_ios.sh")
@@ -467,6 +472,15 @@ if(NETWORK_ENABLED)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
   endif()
+endif()
+if(APPLE AND NOT IOS)
+  # curl auto-detects Homebrew's libidn2 but its lib dir never reaches our
+  # link line ("ld: library 'idn2' not found"); use macOS's built-in IDN.
+  set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+  set(USE_APPLE_IDN ON CACHE BOOL "" FORCE)
+endif()
+
+if(NOT EMSCRIPTEN)  # no curl/SSL on web; browser build has no cpr users
   FetchContent_Declare(
       cpr
       GIT_REPOSITORY https://github.com/libcpr/cpr.git
@@ -524,6 +538,26 @@ else()
   FetchContent_MakeAvailable(rtaudio)
 endif()
 
+if(NOT EMSCRIPTEN)
+  set(LIBREMIDI_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(LIBREMIDI_TESTS OFF CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_JACK ON CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_PIPEWIRE ON CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_WINMM ON CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_WINMIDI ON CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_NETWORK ON CACHE BOOL "" FORCE)
+  set(LIBREMIDI_NO_KEYBOARD ON CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(
+    libremidi
+    GIT_REPOSITORY https://github.com/celtera/libremidi.git
+    GIT_TAG v5.4.3
+    GIT_SHALLOW TRUE
+  )
+
+  FetchContent_MakeAvailable(libremidi)
+endif()
+
 # PortAudio (Windows only -- WDM-KS / MME backends; the other Windows APIs
 # -- DirectSound/ASIO/WASAPI -- are handled by RtAudio above)
 if(WIN32)
@@ -568,6 +602,21 @@ target_include_directories(g719 PUBLIC
                            ${libg719_SOURCE_DIR}/reference_code/include)
 set_target_properties(g719 PROPERTIES C_STANDARD 99)
 target_compile_definitions(g719 PRIVATE VAR_ARRAYS)
+
+option(YATAIDON_PROFILER "Build with the Tracy profiler client (see src/libs/profiler.h)" OFF)
+if(YATAIDON_PROFILER)
+  # On demand: nothing is collected until the Tracy profiler GUI connects
+  set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+  set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)
+  set(TRACY_ONLY_LOCALHOST ON CACHE BOOL "")
+  FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG        v0.14.1
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(tracy)
+endif()
 
 function(_yataidon_collect_targets outvar dir)
   set(_result "")

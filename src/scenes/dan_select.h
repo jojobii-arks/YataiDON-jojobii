@@ -6,6 +6,7 @@
 #include "../objects/global/coin_overlay.h"
 #include "../objects/global/indicator.h"
 #include "../objects/song_select/modifier.h"
+#include "../objects/song_select/dan_transition.h"
 #include "../objects/global/timer.h"
 #include "../objects/global/chara_3d.h"
 #include "../objects/global/nameplate.h"
@@ -19,6 +20,7 @@
 #include <optional>
 #include <memory>
 #include <utility>
+#include <map>
 
 struct DanBoxData {
     fs::path                   json_path;
@@ -42,6 +44,8 @@ public:
     bool paint_ok    = false;
     sol::table lua_paint;
     sol::protected_function fn_draw_cursor;
+    sol::protected_function fn_draw_box;
+    sol::protected_function fn_update;
     void load_paint_surface();
 
     double last_moved = 0;
@@ -84,6 +88,22 @@ private:
 
     int total_notes_for(const std::vector<DanSongEntry>& songs);
 
+    // Chart reads shared by the scan's worker threads: a song sits in many courses, and every
+    // course used to re-read it twice (metadata, then notes)
+    struct ScanMemo {
+        std::mutex mutex;
+        std::map<fs::path, std::shared_ptr<const TJAMetadata>> metadata;
+        std::map<std::pair<fs::path, int>, int> note_counts;
+        std::map<fs::path, int> genres;  // by box.def folder
+    };
+    ScanMemo* memo_ = nullptr;  // set while a scan runs; nullptr = read every time
+    std::shared_ptr<const TJAMetadata> song_metadata(const fs::path& path);
+    int song_note_count(const fs::path& path, int difficulty);
+    int box_genre(const fs::path& box_def_dir);
+    void collect_dan_jsons(const fs::path& root_path, std::vector<fs::path>& out);
+    std::vector<DanBoxData> load_dan_jsons(const std::vector<fs::path>& jsons);
+    std::vector<DanBoxData> scan_roots(const std::vector<fs::path>& roots);
+
     Exam parse_exam(const rapidjson::Value& e);
 
     std::optional<DanSongEntry> load_song_entry(const rapidjson::Value& chart,
@@ -119,6 +139,7 @@ private:
     AllNetIcon allnet_indicator;
     std::unique_ptr<Indicator> indicator;
     SongSelectState state = SongSelectState::BROWSING;
+    std::optional<DanTransition> dan_transition;  // plays on leaving for song select
 
     std::unique_ptr<Chara3D> chara;
     Nameplate nameplate;
@@ -171,6 +192,7 @@ private:
     void   publish_scan_state(double current_ms);
 
     std::optional<Screens> tick_timer(double current_ms);
+    std::optional<Screens> start_dan_transition();
     void open_confirm(double current_ms);
 
     void handle_input_browsing(double current_ms);

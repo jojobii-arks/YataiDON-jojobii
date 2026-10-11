@@ -28,13 +28,15 @@ private:
     sol::protected_function fn_draw_drum_front;
     sol::protected_function fn_is_cloud_finished;
     sol::protected_function fn_get_nameplate_fade;
+    sol::protected_function fn_finish_cloud;
+    bool loading = false;
 
 public:
     PlayerNum player_num;
     std::optional<CostumeMenu> costume_menu;
 
     EntryPlayer(PlayerNum player_num, int side, BoxManager* box_manager);
-    void start_animations();
+    void start_animations(bool hold_cloud = false);
     void update(double current_time);
     void open_costume_menu();
     void draw_drum();
@@ -43,4 +45,6 @@ public:
     bool is_cloud_animation_finished();
     float get_nameplate_fadein();
     void handle_input();
+    void refresh_from_player_data();
+    void finish_loading();  // data equipped: let the held cloud fade away
 };

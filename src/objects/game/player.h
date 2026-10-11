@@ -66,6 +66,9 @@ public:
     Player* kusudama_partner = nullptr;
     int kusudama_shared_hits = 0;
     Player* kusudama_owner() { return (kusudama_partner && is_2p) ? kusudama_partner : this; }
+    // hit notes fly to this player's soul gauge: the bottom one only when two play (2P alone plays
+    // on the top lane)
+    PlayerNum arc_player() const { return (is_2p && kusudama_partner) ? PlayerNum::P2 : PlayerNum::P1; }
 
     std::optional<Note> get_first_note();
 
@@ -99,9 +102,14 @@ public:
         combo = max_combo = 0;
         score = 0;
         total_drumroll = 0;
+        hit_offset_sum_ms = 0.0;
+        hit_offset_count = 0;
         was_gauge_full = false;
+        was_gauge_clear = false;
+        miss_streak = 0;
         note_judgments.clear();
         last_reported_score = -1;
+        last_reported_gogo = -1;
         arc_points = 25;
         if (judge_counter) judge_counter = JudgeCounter();
     }
@@ -131,7 +139,7 @@ public:
     void reset_workout_stats();
     // 1 left, 2 right, 0 if the next note accepts either hand.
     int workout_next_hand() const;
-    int get_scissor_x() const { return lane_cover_tex_id ? virtual_to_screen_x(static_cast<float>(lane_cover_tex_id->x2[0])) : 0; }
+    int get_scissor_x() const { return lane_cover_tex_id ? virtual_to_screen_x(lane_cover_tex_id->scissor_right()) : 0; }
     void set_is_dan(bool v) { is_dan = v; }
 
     void reload_for_dan(std::optional<SongParser>& new_parser, int new_difficulty);
@@ -145,6 +153,7 @@ public:
     void spawn_ending_anim(Background* background = nullptr);
 
     void seek_to(double resume_time);
+    void set_audio_end(double chart_ms);
 
     void update(double ms_from_start, double current_ms, std::optional<Background>& background);
 
@@ -184,17 +193,28 @@ private:
     int combo;
     int score;
     int last_reported_score = -1;   // last value sent to Background::handle_score
+    int last_reported_gogo = -1;   // background handle_gogo edge detection
     int max_combo;
     int total_drumroll;
+    double hit_offset_sum_ms = 0.0;
+    int hit_offset_count = 0;
     std::unordered_map<int, Judgments> note_judgments;
 
     int arc_points;
     float judge_x;
     float judge_y;
+    std::pair<double, int> last_jpos_key{-1e300, -1};  // (start_time, seq) of the newest #JPOSSCROLL applied
 
-    float scroll_multiplier;
     bool is_gogo_time;
     bool was_gauge_full = false;
+    bool was_gauge_clear = false;
+    bool tinted_miss_streak = false;
+    bool tinted_rainbow = false;
+    int miss_streak = 0;
+    double last_balloon_hit_ms = 0;
+    bool balloon_idle = false;
+    AnimIndex rest_anim() const;
+    void on_miss();
     Side autoplay_hit_side;
     int last_subdivision;
 
@@ -287,8 +307,9 @@ private:
     std::vector<ScoreCounterAnimation> base_score_list;
     std::optional<GogoTime> gogo_time;
     std::optional<Fireworks> fireworks;
-    std::optional<double> delay_start;
-    std::optional<double> delay_end;
+    ScrollType scroll_type = ScrollType::NMSCROLL;
+    TempoMap tempo_map;
+    std::optional<double> audio_end_ms;
     std::optional<ComboAnnounce> combo_announce;
     std::optional<BranchIndicator> branch_indicator;
     std::optional<std::variant<FailAnimation, ClearAnimation, FCAnimation>> ending_anim;
@@ -296,6 +317,7 @@ private:
     void get_load_time(Note& note);
 
     void reset_chart();
+    bool unplayable(const Note& note) const;
 
     void handle_timeline(double ms_from_start);
 
@@ -309,12 +331,14 @@ private:
 
     float get_position_y(const Note& note, double current_ms);
 
-    void handle_scroll_type_commands(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
     void handle_gogotime(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
     void handle_judgeposition(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
     void handle_bpmchange(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
     void handle_branch_param(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
     void handle_lyric(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
+    void handle_camera(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
+    void update_camera(double ms_from_start);
+    std::vector<TimelineObject> camera_eases;  // running #CAM*START..END events (P1 only)
     void handle_section(double ms_from_start, const TimelineObject& timeline_object, int buffer_index);
 
     void play_note_manager(double current_ms, std::optional<Background>& background);

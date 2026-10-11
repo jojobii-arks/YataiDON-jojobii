@@ -52,7 +52,7 @@ Player::Player(std::optional<SongParser>& parser_ref, PlayerNum player_num_param
         branch_indicator = BranchIndicator();
         }
     }
-    int player_id = get_player_id(player_num);
+    std::string player_id = get_player_id(player_num);
     auto pd = scores_manager.get_player_data(player_id);
     nameplate = Nameplate(
         pd ? pd->username : "", pd ? pd->title : "",
@@ -63,7 +63,7 @@ Player::Player(std::optional<SongParser>& parser_ref, PlayerNum player_num_param
         chara->set_don_colors(pd->chara_color_1, pd->chara_color_2, pd->chara_color_3);
         chara->apply_face(pd->chara_face_index);
     } else {
-        chara->set_don_colors(chara_default_color_1(player_id), chara_default_color_2(player_id), {249, 240, 225, 255});
+        chara->set_don_colors(chara_default_color_1(player_num), chara_default_color_2(player_num), {249, 240, 225, 255});
     }
     chara->set_anim(AnimIndex::DON_NORMAL);
     if (global_data.config->general.judge_counter && !is_2p) {
@@ -138,10 +138,30 @@ ResultData Player::get_result_score() {
     result.bad = bad_count;
     result.max_combo = max_combo;
     result.total_drumroll = total_drumroll;
+    result.hit_offset_sum_ms = hit_offset_sum_ms;
+    result.hit_offset_count = hit_offset_count;
     if (dan_gauge) result.gauge_length = dan_gauge->get_length() * 0.87f;
     else if (gauge.has_value()) result.gauge_length = gauge->get_length() * 0.87f;
-    if (skipped_run) result.gauge_length = 0.0f;
+    if (dan_gauge) result.cleared = dan_gauge->get_is_clear();
+    else if (gauge.has_value()) result.cleared = gauge->get_is_clear();
+    if (skipped_run) {
+        result.gauge_length = 0.0f;
+        result.cleared = false;
+    }
     return result;
+}
+
+static constexpr int MISS_STREAK_TINT = 6;   // misses in a row that darken the Don and the background
+
+AnimIndex Player::rest_anim() const {
+    if (is_gogo_time) return AnimIndex::DON_SABI;
+    return was_gauge_clear ? AnimIndex::DON_NORM_LOOP : AnimIndex::DON_NORMAL;
+}
+
+void Player::on_miss() {
+    miss_streak++;
+    if (!is_gogo_time && miss_streak <= MISS_STREAK_TINT)
+        chara->set_anim(miss_streak == MISS_STREAK_TINT ? AnimIndex::DON_MISS6 : AnimIndex::DON_MISS);
 }
 
 void Player::spawn_ending_anim(Background* background) {
@@ -159,6 +179,7 @@ void Player::spawn_ending_anim(Background* background) {
     } else if (bad_count == 0) {
         ending_anim = FCAnimation(is_2p, ok_count == 0);
         kind = (ok_count == 0) ? "donderful" : "full_combo";
+        chara->set_anim(AnimIndex::DON_FULL_COMBO);
     } else {
         ending_anim = ClearAnimation(is_2p);
         kind = "clear";
@@ -181,6 +202,10 @@ void Player::reload_for_dan(std::optional<SongParser>& new_parser, int new_diffi
     branch_n.clear();
     timeline.clear();
     timeline_buffer.clear();
+    if (!is_2p) {
+        camera_eases.clear();
+        global_data.camera = CameraConfig();
+    }
     draw_judge_list.clear();
 
     gauge.reset();
@@ -245,11 +270,12 @@ void Player::append_notes(const NoteList& extra) {
 }
 
 void Player::handle_timeline(double ms_from_start) {
+    update_camera(ms_from_start);
     if (timeline.empty()) return;
-    TimelineObject timeline_object = timeline.front();
-    if (ms_from_start > timeline_object.start_time) {
+    // Drain everything due: one per frame lets same-time commands trail by frames
+    while (!timeline.empty() && ms_from_start > timeline.front().start_time) {
+        timeline_buffer.push_back(timeline.front());
         timeline.pop_front();
-        timeline_buffer.push_back(timeline_object);
     }
 
     for (int i = (int)timeline_buffer.size() - 1; i >= 0; i--) {
@@ -257,8 +283,6 @@ void Player::handle_timeline(double ms_from_start) {
         // dispatching as soon as the entry has been consumed.
         TimelineObject entry = timeline_buffer[i];
         const size_t before = timeline_buffer.size();
-        handle_scroll_type_commands(ms_from_start, entry, i);
-        if (timeline_buffer.size() != before) continue;
         handle_bpmchange(ms_from_start, entry, i);
         if (timeline_buffer.size() != before) continue;
         handle_judgeposition(ms_from_start, entry, i);
@@ -268,6 +292,8 @@ void Player::handle_timeline(double ms_from_start) {
         handle_branch_param(ms_from_start, entry, i);
         if (timeline_buffer.size() != before) continue;
         handle_lyric(ms_from_start, entry, i);
+        if (timeline_buffer.size() != before) continue;
+        handle_camera(ms_from_start, entry, i);
         if (timeline_buffer.size() != before) continue;
         handle_section(ms_from_start, entry, i);
     }
@@ -484,25 +510,25 @@ void Player::update(double ms_from_start, double current_ms, std::optional<Backg
         }
     }
     handle_timeline(ms_from_start);
-    if (delay_start.has_value() && delay_end.has_value()) {
-        if (ms_from_start >= delay_end.value()) {
-            double delay = delay_end.value() - delay_start.value();
-            for (auto& note : draw_note_buffer) note.load_ms += delay;
-            for (auto& note : draw_note_list) note.load_ms += delay;
-            for (auto& note : barlines) note.load_ms += delay;
-            delay_start.reset();
-            delay_end.reset();
-        }
-    }
 
     for (auto it = draw_arc_list.begin(); it != draw_arc_list.end(); ) {
         it->update(current_ms);
-        if (it->is_finished()) {
+        if (it->consume_note_finished()) {
             NoteType note_type = it->note_type;
             bool is_big = it->is_big;
+            if (is_big) {  // there should be a better way to do this
+                if (note_type == NoteType::DON) {
+                    note_type = NoteType::DON_L;
+                } else if (note_type == NoteType::KAT) {
+                    note_type = NoteType::KAT_L;
+                }
+            }
+            if (note_type == NoteType::BALLOON_HEAD || is_balloon) {
+                note_type = NoteType::DON_L;
+            }
+            gauge_hit_effect.push_back(GaugeHitEffect(note_type, is_big, arc_player() == PlayerNum::P2));
+        } else if (it->is_finished()) {
             it = draw_arc_list.erase(it);
-            gauge_hit_effect.clear();
-            gauge_hit_effect.push_back(GaugeHitEffect(note_type, is_big, player_num == PlayerNum::P2));
         } else {
             ++it;
         }
@@ -539,6 +565,10 @@ void Player::update(double ms_from_start, double current_ms, std::optional<Backg
         gauge->update(current_ms);
         if (background.has_value()) {
             background->handle_gauge(player_num, gauge->get_length() / 100.0f, gauge->get_is_clear(), gauge->get_is_rainbow());
+            if ((int)is_gogo_time != last_reported_gogo) {
+                last_reported_gogo = (int)is_gogo_time;
+                background->handle_gogo(player_num, is_gogo_time);
+            }
             if (score != last_reported_score) {
                 last_reported_score = score;
                 background->handle_score(player_num, score);
@@ -549,6 +579,29 @@ void Player::update(double ms_from_start, double current_ms, std::optional<Backg
             chara->set_anim(AnimIndex::DON_FULL_GAGE);
         }
         was_gauge_full = gauge_full_now;
+        const bool streak_now = miss_streak >= MISS_STREAK_TINT;
+        if (streak_now != tinted_miss_streak || gauge_full_now != tinted_rainbow) {
+            if (tinted_miss_streak && !streak_now) chara->set_anim(rest_anim());
+            tinted_miss_streak = streak_now;
+            tinted_rainbow = gauge_full_now;
+            if (streak_now) chara->set_tint({0, 0, 0, 255}, 0.35f);
+            else if (gauge_full_now) chara->set_tint({255, 220, 0, 255}, 0.5f);
+            else chara->set_tint({0, 0, 0, 255}, 0.0f);
+            if (background.has_value()) background->handle_miss_streak(player_num, streak_now);
+        }
+        const bool gauge_clear_now = gauge->get_is_clear();
+        if (gauge_clear_now != was_gauge_clear) {
+            was_gauge_clear = gauge_clear_now;
+            if (!is_gogo_time) {
+                chara->set_anim(rest_anim());
+                chara->set_anim(gauge_clear_now ? AnimIndex::DON_NORM_UP : AnimIndex::DON_NORM_DOWN);
+            }
+        }
+        // balloon being hit vs. waiting for a hit
+        if (is_balloon && !balloon_idle && current_ms - last_balloon_hit_ms > 400.0) {
+            balloon_idle = true;
+            chara->set_anim(AnimIndex::DON_BALLOON_NOBEAT);
+        }
     }
     if (judge_counter.has_value()) {
         judge_counter->update(good_count, ok_count, bad_count, total_drumroll);
@@ -573,20 +626,20 @@ void Player::draw(double ms_from_start, float x, float y, ray::Shader& mask_shad
         branch_indicator->draw(y);
     }
     if (gauge.has_value()) {
-        if (is_2p) {
+        if (arc_player() == PlayerNum::P2) {   // the bottom gauge only when two play
             gauge->draw(y + tex.skin_config[SC::GAUGE_2P_OFFSET].y);
         } else {
             gauge->draw(y);
         }
         if (bg_hook) bg_hook->draw_gauge(player_num);
     }
-    if (lane_hit_effect.has_value()) {
-        lane_hit_effect->draw(y);
-    }
     tex.draw_texture(t_lane_hit_circle, {.x = judge_x, .y = y + judge_y});
 
     if (gogo_time.has_value()) {
         gogo_time->draw(judge_x, y + judge_y);
+    }
+    if (lane_hit_effect.has_value()) {
+        lane_hit_effect->draw(y);
     }
     if (fireworks.has_value()) {
         fireworks->draw();
@@ -597,15 +650,16 @@ void Player::draw(double ms_from_start, float x, float y, ray::Shader& mask_shad
         anim.draw_effect(judge_x, y + judge_y);
     }
     {
-        int scissor_x = virtual_to_screen_x(static_cast<float>(lane_cover_tex_id->x2[0]));
-        int win_w = ray::GetScreenWidth();
-        ray::BeginScissorMode(scissor_x, 0, win_w - scissor_x, ray::GetScreenHeight());
+        int scissor_x = virtual_to_screen_x(lane_cover_tex_id->scissor_right());
+        int win_w = ray::GetRenderWidth();
+        ray::BeginScissorMode(scissor_x, 0, win_w - scissor_x, ray::GetRenderHeight());
         draw_notes(ms_from_start, y);
         ray::EndScissorMode();
     }
 
     for (Judgment& anim : draw_judge_list) {
         anim.draw_outer_effect(judge_x, y + judge_y);
+        anim.draw_ray_effect(judge_x, y + judge_y);
     }
     for (Judgment& anim : draw_judge_list) {
         anim.draw_text(judge_x, y + judge_y);
@@ -643,15 +697,16 @@ void Player::draw_practice(double ms_from_start, float x, float y, ray::Shader& 
     }
 
     if (draw_notes_on) {
-        int scissor_x = virtual_to_screen_x(static_cast<float>(lane_cover_tex_id->x2[0]));
-        int win_w = ray::GetScreenWidth();
-        ray::BeginScissorMode(scissor_x, 0, win_w - scissor_x, ray::GetScreenHeight());
+        int scissor_x = virtual_to_screen_x(lane_cover_tex_id->scissor_right());
+        int win_w = ray::GetRenderWidth();
+        ray::BeginScissorMode(scissor_x, 0, win_w - scissor_x, ray::GetRenderHeight());
         draw_notes(ms_from_start, y);
         ray::EndScissorMode();
     }
 
     for (Judgment& anim : draw_judge_list) {
         anim.draw_outer_effect(judge_x, y + judge_y);
+        anim.draw_ray_effect(judge_x, y + judge_y);
     }
     for (Judgment& anim : draw_judge_list) {
         anim.draw_text(judge_x, y + judge_y);
@@ -664,10 +719,10 @@ void Player::draw_practice(double ms_from_start, float x, float y, ray::Shader& 
 void Player::get_load_time(Note& note) {
     int note_half_w = t_notes_9->width / 2;
     float travel_distance = tex.screen_width - JudgePos::X;
-    float base_pixels_per_ms = (note.bpm / 240000 * abs(note.scroll_x) * travel_distance);
-    if (base_pixels_per_ms == 0) {
-        base_pixels_per_ms = (note.bpm / 240000 * abs(note.scroll_y) * travel_distance);
-    }
+    // The faster axis decides when a note comes on screen: a polar #SCROLL pointing straight up
+    // leaves a horizontal component of ~1e-17, not 0
+    bool horizontal = abs(note.scroll_x) >= abs(note.scroll_y);
+    float base_pixels_per_ms = (note.bpm / 240000 * (horizontal ? abs(note.scroll_x) : abs(note.scroll_y)) * travel_distance);
     if (base_pixels_per_ms == 0) {
         note.load_ms = note.hit_ms;
         note.unload_ms = note.hit_ms;
@@ -678,6 +733,19 @@ void Player::get_load_time(Note& note) {
     if (!note.sudden_appear_ms.has_value() ||
         !note.sudden_moving_ms.has_value() ||
         note.sudden_appear_ms.value() == std::numeric_limits<float>::infinity()) {
+        if (scroll_type != ScrollType::NMSCROLL) {
+            // On screen while (note beat - current beat) * px_per_beat is between the left edge
+            // and the right edge
+            double px_per_beat = (horizontal ? note.scroll_x : abs(note.scroll_y)) * travel_distance / 4;
+            double left = horizontal ? -(JudgePos::X + note_half_w) : -(travel_distance + note_half_w);
+            double right = travel_distance + note_half_w;
+            double beat = tempo_map.beat_at(note.hit_ms);
+            double lo = beat - right / px_per_beat, hi = beat - left / px_per_beat;
+            auto [first, last] = tempo_map.ms_within(std::min(lo, hi), std::max(lo, hi));
+            note.load_ms = std::min(first, note.hit_ms);
+            note.unload_ms = std::max(last, note.hit_ms);
+            return;
+        }
         note.load_ms = note.hit_ms - normal_travel_ms;
         note.unload_ms = note.hit_ms + normal_travel_ms;
         return;
@@ -690,6 +758,18 @@ void Player::get_load_time(Note& note) {
     float sudden_pixels_per_ms = travel_distance / movement_duration;
     float unload_offset = travel_distance / sudden_pixels_per_ms;
     note.unload_ms = note.hit_ms + unload_offset;
+}
+
+// #BMSCROLL / #HBSCROLL charts can hold notes behind a #DELAY that outlasts the song (a wall of
+// notes frozen on screen). They are drawn but never judged, counted or waited for.
+bool Player::unplayable(const Note& note) const {
+    return scroll_type != ScrollType::NMSCROLL && audio_end_ms.has_value()
+        && note.type != NoteType::BARLINE && note.hit_ms > audio_end_ms.value();
+}
+
+void Player::set_audio_end(double chart_ms) {
+    audio_end_ms = chart_ms;
+    if (scroll_type != ScrollType::NMSCROLL && end_time > chart_ms) reset_chart();
 }
 
 void Player::reset_chart() {
@@ -708,7 +788,8 @@ void Player::reset_chart() {
     Note* last_note = nullptr;
     end_time = 0;
     bpm = parser->metadata.bpm;
-    scroll_multiplier = 1.0f;
+    scroll_type = notes.scroll_type;
+    tempo_map = notes.tempo_map;
 
     for (Note& note: notes.notes) {
         get_load_time(note);
@@ -721,19 +802,22 @@ void Player::reset_chart() {
                 it->unload_ms = note.unload_ms;
             }
         }
-        if (note.type == NoteType::DON || note.type == NoteType::DON_L) {
-            don_notes.push_back(note);
-        } else if (note.type == NoteType::KAT || note.type == NoteType::KAT_L) {
-            kat_notes.push_back(note);
-        } else if (note.type != NoteType::BARLINE) {
-            other_notes.push_back(note);
+        bool playable = !unplayable(note);
+        if (playable) {
+            if (note.type == NoteType::DON || note.type == NoteType::DON_L) {
+                don_notes.push_back(note);
+            } else if (note.type == NoteType::KAT || note.type == NoteType::KAT_L) {
+                kat_notes.push_back(note);
+            } else if (note.type != NoteType::BARLINE) {
+                other_notes.push_back(note);
+            }
         }
         draw_note_list.push_back(note);
         if (note.type != NoteType::BARLINE) {
             last_note = &note;
         }
 
-        if (note.hit_ms > end_time) {
+        if (playable && note.hit_ms > end_time) {
             end_time = note.hit_ms;
         }
     }
@@ -756,6 +840,7 @@ void Player::reset_chart() {
         if (!branch.empty()) {
             for (NoteList& section : branch) {
                 apply_modifiers(section, modifiers);
+                std::erase_if(section.notes, [&](const Note& n) { return unplayable(n); });
                 Note* last_note = nullptr;
                 for (Note& note: section.notes) {
                     get_load_time(note);
@@ -774,6 +859,7 @@ void Player::reset_chart() {
     }
 
     this->timeline = notes.timeline;
+    last_jpos_key = {-1e300, -1};
 
     // Rasterize every #LYRIC glyph now, in one go: otherwise each new line with an
     // unseen character rebuilt the lyric-size font atlas mid-song (a ~20 ms hitch
@@ -808,7 +894,8 @@ void Player::reset_chart() {
 
     NoteList total_notes; //all notes including master branch
 
-    total_notes.notes.insert(total_notes.notes.end(), notes.notes.begin(), notes.notes.end());
+    std::copy_if(notes.notes.begin(), notes.notes.end(), std::back_inserter(total_notes.notes),
+                 [&](const Note& n) { return !unplayable(n); });
     for (NoteList section : branch_m) {
         total_notes.notes.insert(total_notes.notes.end(), section.notes.begin(), section.notes.end());
     }
@@ -864,22 +951,37 @@ void Player::reset_chart() {
 
 std::optional<Note> Player::get_first_note() {
     if (draw_note_list.empty()) return std::nullopt;
+    // #BMSCROLL / #HBSCROLL: a note can be on screen long before it comes up (a slow #SCROLL, a
+    // beat count that stops or runs back), so the earliest-loading note says nothing about how
+    // long the lead-in has to be; take the first note to hit
+    if (scroll_type != ScrollType::NMSCROLL) {
+        auto first = std::min_element(draw_note_list.begin(), draw_note_list.end(),
+            [](const Note& a, const Note& b) {
+                if ((a.type == NoteType::BARLINE) != (b.type == NoteType::BARLINE)) return b.type == NoteType::BARLINE;
+                return a.hit_ms < b.hit_ms;
+            });
+        return *first;
+    }
     return draw_note_list.front();
 }
 
+// #BMSCROLL / #HBSCROLL: distance = beats to the note, so the field speeds up and slows down
+// with the tempo and stops during a #DELAY. Otherwise: time to the note at the note's own BPM.
 float Player::get_position_x(const Note& note, double current_ms) {
-    if (delay_start.has_value()) {
-        current_ms = delay_start.value();
+    if (scroll_type != ScrollType::NMSCROLL) {
+        double beats = tempo_map.beat_at(note.hit_ms) - tempo_map.beat_at(current_ms);
+        return JudgePos::X + beats / 4 * note.scroll_x * (tex.screen_width - JudgePos::X);
     }
-    float speedx = note.bpm * scroll_multiplier / 240000 * note.scroll_x * (tex.screen_width - JudgePos::X);
+    float speedx = note.bpm / 240000 * note.scroll_x * (tex.screen_width - JudgePos::X);
     return JudgePos::X + (note.hit_ms - current_ms) * speedx;
 }
 
 float Player::get_position_y(const Note& note, double current_ms) {
-    if (delay_start.has_value()) {
-        current_ms = delay_start.value();
+    if (scroll_type != ScrollType::NMSCROLL) {
+        double beats = tempo_map.beat_at(note.hit_ms) - tempo_map.beat_at(current_ms);
+        return beats / 4 * note.scroll_y * (tex.screen_width - JudgePos::X);
     }
-    float speedy = note.bpm * scroll_multiplier / 240000 * note.scroll_y * ((tex.screen_width - JudgePos::X)/tex.screen_width) * tex.screen_width;
+    float speedy = note.bpm / 240000 * note.scroll_y * ((tex.screen_width - JudgePos::X)/tex.screen_width) * tex.screen_width;
     return (note.hit_ms - current_ms) * speedy;
 }
 
@@ -904,31 +1006,6 @@ float Player::hidden_note_fade(float note_x) const {
     return (dist - fade_end) / fade_zone;
 }
 
-void Player::handle_scroll_type_commands(double ms_from_start, const TimelineObject& timeline_object, int buffer_index) {
-    if (timeline_object.start_time > ms_from_start) return;
-    if (timeline_object.bpmchange.has_value()) {
-        scroll_multiplier *= timeline_object.bpmchange.value();
-        bpm *= timeline_object.bpmchange.value();
-        if (buffer_index != (int)timeline_buffer.size() - 1)
-            timeline_buffer[buffer_index] = std::move(timeline_buffer.back());
-        timeline_buffer.pop_back();
-        return;
-    }
-
-    if (timeline_object.delay.has_value()) {
-        if (!delay_start.has_value()) {
-            delay_start = timeline_object.start_time;
-            delay_end = timeline_object.start_time + timeline_object.delay.value();
-        } else {
-            spdlog::error("Needs fix: delay is currently active, but another delay is being activated");
-        }
-        if (buffer_index != (int)timeline_buffer.size() - 1)
-            timeline_buffer[buffer_index] = std::move(timeline_buffer.back());
-        timeline_buffer.pop_back();
-        return;
-    }
-}
-
 void Player::handle_gogotime(double ms_from_start, const TimelineObject& timeline_object, int buffer_index) {
     if (timeline_object.start_time > ms_from_start) return;
     if (!timeline_object.gogo_time.has_value()) return;
@@ -942,7 +1019,13 @@ void Player::handle_gogotime(double ms_from_start, const TimelineObject& timelin
         chara->set_anim(AnimIndex::DON_SABI_START);
     } else {
         gogo_time.reset();
-        chara->set_anim(AnimIndex::DON_NORMAL);
+        if (0 < miss_streak && miss_streak < MISS_STREAK_TINT) {
+            chara->set_anim(AnimIndex::DON_MISS);
+        } else if (0 < miss_streak) {
+            chara->set_anim(AnimIndex::DON_MISS6);
+        } else {
+            chara->set_anim(rest_anim());
+        }
     }
 
     if (buffer_index != (int)timeline_buffer.size() - 1)
@@ -957,7 +1040,11 @@ void Player::handle_judgeposition(double ms_from_start, const TimelineObject& ti
     if (!timeline_object.delta_x.has_value()) return;
     if (!timeline_object.delta_y.has_value()) return;
 
-    if (timeline_object.start_time <= ms_from_start && ms_from_start <= timeline_object.end_time) {
+    const std::pair<double, int> key{timeline_object.start_time, timeline_object.seq};
+    const bool newest = key >= last_jpos_key;
+    if (newest) last_jpos_key = key;
+
+    if (newest && timeline_object.start_time <= ms_from_start && ms_from_start <= timeline_object.end_time) {
         double duration = timeline_object.end_time - timeline_object.start_time;
         if (duration > 0) {
             double t = (ms_from_start - timeline_object.start_time) / duration;
@@ -972,6 +1059,11 @@ void Player::handle_judgeposition(double ms_from_start, const TimelineObject& ti
     }
 
     if (ms_from_start > timeline_object.end_time) {
+        if (newest) {
+            judge_x = (timeline_object.judge_pos_x.value() + timeline_object.delta_x.value()) * tex.screen_scale;
+            judge_y = (timeline_object.judge_pos_y.value() + timeline_object.delta_y.value()) * tex.screen_scale;
+        }
+
         if (buffer_index != (int)timeline_buffer.size() - 1)
             timeline_buffer[buffer_index] = std::move(timeline_buffer.back());
         timeline_buffer.pop_back();
@@ -982,7 +1074,9 @@ void Player::handle_bpmchange(double ms_from_start, const TimelineObject& timeli
     if (timeline_object.start_time > ms_from_start) return;
     if (!timeline_object.bpm.has_value()) return;
 
-    bpm = timeline_object.bpm.value();
+    // Negative in #HBSCROLL / #BMSCROLL charts that run the field backwards; animations and
+    // autoplay only want the tempo
+    bpm = std::abs(timeline_object.bpm.value());
     chara->set_bpm(bpm);
 
     if (buffer_index != (int)timeline_buffer.size() - 1)
@@ -1074,6 +1168,77 @@ void Player::handle_lyric(double ms_from_start, const TimelineObject& timeline_o
     timeline_buffer.pop_back();
 }
 
+static double ease_progress(double t, EaseDir dir, EaseCalc calc) {
+    t = std::clamp(t, 0.0, 1.0);
+    auto in = [calc](double x) {
+        switch (calc) {
+            case EaseCalc::CUBIC: return x * x * x;
+            case EaseCalc::QUARTIC: return x * x * x * x;
+            case EaseCalc::QUINTIC: return x * x * x * x * x;
+            case EaseCalc::SINUSOIDAL: return 1.0 - std::cos(x * M_PI / 2.0);
+            case EaseCalc::EXPONENTIAL: return x == 0.0 ? 0.0 : std::pow(2.0, 10.0 * (x - 1.0));
+            case EaseCalc::CIRCULAR: return 1.0 - std::sqrt(1.0 - x * x);
+            default: return x;
+        }
+    };
+    if (dir == EaseDir::IN_) return in(t);
+    if (dir == EaseDir::OUT_) return 1.0 - in(1.0 - t);
+    return t < 0.5 ? in(t * 2.0) / 2.0 : 1.0 - in((1.0 - t) * 2.0) / 2.0;
+}
+
+static void apply_camera_prop(CamProp prop, float v) {
+    CameraConfig& c = global_data.camera;
+    switch (prop) {
+        case CamProp::H_OFFSET: c.offset.x = v; break;
+        case CamProp::V_OFFSET: c.offset.y = v; break;
+        case CamProp::ZOOM: c.zoom = v; break;
+        case CamProp::ROTATION: c.rotation = v; break;
+        case CamProp::H_SCALE: c.h_scale = v; break;
+        case CamProp::V_SCALE: c.v_scale = v; break;
+        default: break;
+    }
+}
+
+// TJAPlayer3-Extended camera commands drive the global camera; only P1 owns it.
+void Player::handle_camera(double ms_from_start, const TimelineObject& timeline_object, int buffer_index) {
+    if (timeline_object.start_time > ms_from_start) return;
+    if (!timeline_object.cam.has_value()) return;
+
+    if (!is_2p) {
+        const CameraEvent& ev = timeline_object.cam.value();
+        if (ev.prop == CamProp::RESET) {
+            camera_eases.clear();
+            ray::Color border = global_data.camera.border_color;
+            global_data.camera = CameraConfig();
+            global_data.camera.border_color = border;
+        } else if (ev.prop == CamProp::BORDER_COLOR) {
+            global_data.camera.border_color = {(unsigned char)std::clamp(ev.from, 0.0, 255.0),
+                                               (unsigned char)std::clamp(ev.to, 0.0, 255.0),
+                                               (unsigned char)std::clamp(ev.extra, 0.0, 255.0), 255};
+        } else if (ev.ease) {
+            std::erase_if(camera_eases, [&](const TimelineObject& t) { return t.cam->prop == ev.prop; });
+            camera_eases.push_back(timeline_object);
+        } else {
+            std::erase_if(camera_eases, [&](const TimelineObject& t) { return t.cam->prop == ev.prop; });
+            apply_camera_prop(ev.prop, (float)ev.to);
+        }
+    }
+    if (buffer_index != (int)timeline_buffer.size() - 1)
+        timeline_buffer[buffer_index] = std::move(timeline_buffer.back());
+    timeline_buffer.pop_back();
+}
+
+void Player::update_camera(double ms_from_start) {
+    for (const TimelineObject& t : camera_eases) {
+        const CameraEvent& ev = t.cam.value();
+        double len = t.end_time - t.start_time;
+        double p = len > 0 ? (ms_from_start - t.start_time) / len : 1.0;
+        double e = ease_progress(p, ev.dir, ev.calc);
+        apply_camera_prop(ev.prop, (float)(ev.from + (ev.to - ev.from) * e));
+    }
+    std::erase_if(camera_eases, [&](const TimelineObject& t) { return ms_from_start >= t.end_time; });
+}
+
 void Player::play_note_manager(double current_ms, std::optional<Background>& background) {
     if (workout_hold) return;
     const double miss_window = (difficulty <= (int)Difficulty::NORMAL) ? Timing::BAD_EASY : Timing::BAD;
@@ -1082,6 +1247,7 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
         if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
         bad_count++;
         workout_on_auto_miss();
+        on_miss();
         note_judgments[don_notes.front().index] = Judgments::BAD;
         if (dan_gauge) dan_gauge->add_bad();
         else if (gauge.has_value()) gauge->add_bad();
@@ -1095,6 +1261,7 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
         if (background.has_value()) background->handle_bad(PlayerNum(1 + is_2p));
         bad_count++;
         workout_on_auto_miss();
+        on_miss();
         note_judgments[kat_notes.front().index] = Judgments::BAD;
         if (dan_gauge) dan_gauge->add_bad();
         else if (gauge.has_value()) gauge->add_bad();
@@ -1110,6 +1277,9 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
         if (note.type == NoteType::ROLL_HEAD || note.type == NoteType::ROLL_HEAD_L) {
             is_drumroll = true;
         } else if (note.type == NoteType::BALLOON_HEAD || note.type == NoteType::KUSUDAMA) {
+            if (!is_balloon) { // should not set animation DON_BALLOON_NOBEAT here
+                balloon_idle = true;
+            }
             is_balloon = true;
         } else if (note.type == NoteType::TAIL) {
             other_notes.pop_front();
@@ -1122,8 +1292,10 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
         if (other_notes.size() < 2) return;
         Note& tail = other_notes[1];
         if (tail.hit_ms <= current_ms) {
+            const bool balloon_missed = note.type == NoteType::BALLOON_HEAD;   // a burst one is gone already
             other_notes.pop_front();
             other_notes.pop_front();
+            if (balloon_missed && background.has_value()) background->handle_balloon_end(PlayerNum(is_2p + 1));
             is_drumroll = false;
             is_balloon = false;
             curr_drumroll_count = 0;
@@ -1133,6 +1305,7 @@ void Player::play_note_manager(double current_ms, std::optional<Background>& bac
 }
 
 void Player::draw_note_manager(double current_ms) {
+    current_ms += visual_offset;
     while (!draw_note_list.empty() && current_ms >= draw_note_list.front().load_ms) {
         Note current_note = draw_note_list.front();
         draw_note_list.pop_front();
@@ -1203,6 +1376,7 @@ void Player::note_manager(double current_ms, std::optional<Background>& backgrou
 }
 
 void Player::note_correct(const Note& note, double current_ms) {
+    miss_streak = 0;
     if (!don_notes.empty() && don_notes[0] == note) {
         don_notes.pop_front();
     } else if (!kat_notes.empty() && kat_notes[0] == note) {
@@ -1211,7 +1385,6 @@ void Player::note_correct(const Note& note, double current_ms) {
         other_notes.pop_front();
     }
 
-    int index = note.index;
     if (note.type == NoteType::BALLOON_HEAD || note.type == NoteType::KUSUDAMA) {
         if (!other_notes.empty()) {
             other_notes.pop_front();
@@ -1220,9 +1393,8 @@ void Player::note_correct(const Note& note, double current_ms) {
 
     if (note.type < NoteType::BALLOON_HEAD) {
         combo++;
-        if (combo % 10 == 0) {
-            chara->set_anim(bad_count == 0 ? AnimIndex::DON_FULL_COMBO
-                                            : AnimIndex::DON_COMBO);
+        if (combo % 10 == 0 && !is_gogo_time) {
+            chara->set_anim(AnimIndex::DON_COMBO);
         }
         if (combo % 100 == 0) {
             combo_announce = ComboAnnounce(combo, current_ms, player_num);
@@ -1238,7 +1410,7 @@ void Player::note_correct(const Note& note, double current_ms) {
 
     if (note.type != NoteType::KUSUDAMA) {
         bool is_big = note.type == NoteType::DON_L || note.type == NoteType::KAT_L || note.type == NoteType::BALLOON_HEAD;
-        draw_arc_list.push_back(NoteArc(note.type, current_ms, PlayerNum(is_2p + 1), is_big, note.type == NoteType::BALLOON_HEAD, judge_x, judge_y));
+        draw_arc_list.push_back(NoteArc(note.type, current_ms, arc_player(), is_big, note.type == NoteType::BALLOON_HEAD, judge_x, judge_y));
     }
     auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
                                note.index, [](const Note& n, int idx) { return n.index < idx; });
@@ -1248,7 +1420,8 @@ void Player::note_correct(const Note& note, double current_ms) {
 }
 
 void Player::check_drumroll(double current_ms, DrumType drum_type, std::optional<Background>& background) {
-    draw_arc_list.push_back(NoteArc(NoteType(drum_type), current_ms, PlayerNum(is_2p + 1), (int)drum_type == 3 || (int)drum_type == 4, false));
+    const bool is_big = !other_notes.empty() && other_notes.front().type == NoteType::ROLL_HEAD_L;
+    draw_arc_list.push_back(NoteArc(NoteType(drum_type), current_ms, arc_player(), is_big, false));
     curr_drumroll_count++;
     total_drumroll++;
     branch_r_count++;
@@ -1276,9 +1449,14 @@ void Player::check_balloon(double current_ms, DrumType drum_type, const Note& ba
     if (!balloon.count.has_value()) return;
     if (!balloon_counter.has_value()) {
         balloon_counter = BalloonCounter(balloon.count.value(), is_2p);
+    }
+    if (balloon_idle) {
+        balloon_idle = false;
         chara->set_anim(AnimIndex::DON_BALLOON_LOOP);
     }
-    if (background.has_value()) background->handle_balloon(PlayerNum(is_2p + 1));
+    last_balloon_hit_ms = current_ms;
+    if (background.has_value())
+        background->handle_balloon(PlayerNum(is_2p + 1), balloon.count.value() - curr_balloon_count - 1);
     curr_balloon_count++;
     total_drumroll++;
     score += 100;
@@ -1301,7 +1479,7 @@ void Player::check_kusudama(double current_ms, DrumType drum_type, const Note& b
         owner->kusudama_counter = KusudamaCounter(balloon.count.value());
         owner->kusudama_shared_hits = 0;
     }
-    if (background.has_value()) background->handle_balloon(PlayerNum(is_2p + 1));
+    if (background.has_value()) background->handle_kusudama(PlayerNum(is_2p + 1));
     total_drumroll++;
     score += 100;
     base_score_list.push_back(ScoreCounterAnimation(player_num, 100, is_2p));
@@ -1397,6 +1575,14 @@ void Player::workout_drop_front(std::deque<Note>& lane, int code, std::optional<
 
 void Player::check_note(double ms_from_start, DrumType drum_type, double current_ms, std::optional<Background>& background, Side side) {
     if (don_notes.empty() && kat_notes.empty() && other_notes.empty()) return;
+
+    auto record_hit_offset = [this, ms_from_start](const Note& note) {
+        if (modifiers.auto_play) return;
+
+        const double offset_ms = ms_from_start - note.hit_ms;
+        hit_offset_sum_ms += offset_ms;
+        hit_offset_count++;
+    };
 
     float good_window_ms;
     float ok_window_ms;
@@ -1632,6 +1818,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
         if (!blocked_by(blocked_lane) && !blocked_by(other_notes) && ms_from_start > next.hit_ms - ok_window_ms) {
             combo = 0;
             bad_count++;
+            on_miss();
             note_judgments[curr_note.index] = Judgments::BAD;
             if (dan_gauge) dan_gauge->add_bad();
             else if (gauge.has_value()) gauge->add_bad();
@@ -1658,6 +1845,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
 
         bool big = curr_note.type == NoteType::DON_L || curr_note.type == NoteType::KAT_L;
         if ((curr_note.hit_ms - good_window_ms <= ms_from_start) && (ms_from_start <= curr_note.hit_ms + good_window_ms)) {
+            record_hit_offset(curr_note);
             if (draw_judge_list.size() < 7) {
                 draw_judge_list.push_back(Judgment(Judgments::GOOD, big));
             }
@@ -1678,6 +1866,7 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             if (background.has_value()) background->handle_good(PlayerNum(1 + is_2p));
 
         } else if ((curr_note.hit_ms - ok_window_ms) <= ms_from_start && ms_from_start <= (curr_note.hit_ms + ok_window_ms)) {
+            record_hit_offset(curr_note);
             draw_judge_list.push_back(Judgment(Judgments::OK, big));
             lane_hit_effect = LaneHitEffect(drum_type, Judgments::OK);
             note_judgments[curr_note.index] = Judgments::OK;
@@ -1699,10 +1888,12 @@ void Player::check_note(double ms_from_start, DrumType drum_type, double current
             draw_judge_list.push_back(Judgment(Judgments::BAD, big));
             bad_count++;
             if (workout_track) workout_on_judge(3, ms_from_start - curr_note.hit_ms);
+            on_miss();
             combo = 0;
             branch_note_count++;
             // Same note as the GOOD/OK branches: curr_note may be lane[1] (stale head).
             const Note note = curr_note;
+            record_hit_offset(note);
             lane.erase(lane.begin() + lane_pos);
             note_judgments[note.index] = Judgments::BAD;
             auto it = std::lower_bound(draw_note_buffer.begin(), draw_note_buffer.end(),
@@ -1732,9 +1923,13 @@ void Player::drumroll_counter_manager(double current_ms) {
 }
 
 void Player::balloon_counter_manager(double current_ms) {
+    if (!is_balloon && balloon_idle && !balloon_counter.has_value()) {   // never hit
+        balloon_idle = false;
+        chara->set_anim(rest_anim());
+    }
     if (!is_balloon && balloon_counter.has_value() && !balloon_counter->has_popped()) {
         balloon_counter.reset();
-        chara->set_anim(AnimIndex::DON_NORMAL);
+        chara->set_anim(rest_anim());
         chara->set_anim(AnimIndex::DON_BALLOON_FAILURE);
     }
     if (balloon_counter.has_value()) {
@@ -1745,7 +1940,7 @@ void Player::balloon_counter_manager(double current_ms) {
                 base_score_list.push_back(ScoreCounterAnimation(player_num, 5000, is_2p));
             }
             balloon_counter.reset();
-            chara->set_anim(AnimIndex::DON_NORMAL);
+            chara->set_anim(rest_anim());
             chara->set_anim(AnimIndex::DON_BALLOON_SUCCESS);
         }
     }
@@ -1813,7 +2008,7 @@ void Player::handle_input(double ms_from_start, double current_ms, std::optional
     }
 
     struct InputCheck {
-        bool (*check_func)(PlayerNum);
+        bool (*check_func)(PlayerNum, float*);
         DrumType drum_type;
         Side side;
         const std::string* sound;
@@ -1828,9 +2023,10 @@ void Player::handle_input(double ms_from_start, double current_ms, std::optional
 
     for (const auto& input : input_checks) {
 
-        while (input.check_func(player_num)) {
+        float strength = 1.0f;
+        while (input.check_func(player_num, &strength)) {
             spawn_hit_effects(input.drum_type, input.side);
-            audio.play_sound(*input.sound, VolumePreset::HITSOUND);
+            audio.play_sound(*input.sound, VolumePreset::HITSOUND, strength);
             InputLogType log_type;
             if (input.drum_type == DrumType::DON) {
                 log_type = input.side == Side::LEFT ? InputLogType::DON_L : InputLogType::DON_R;
@@ -1948,6 +2144,7 @@ void Player::draw_balloon(double current_ms, float y, const Note& head, int curr
 }
 
 void Player::draw_notes(double current_ms, float y) {
+    current_ms += visual_offset;
     for (auto it = barlines.rbegin(); it != barlines.rend(); ++it) {
         draw_bar(current_ms, y, *it);
     }
@@ -1961,7 +2158,8 @@ void Player::draw_notes(double current_ms, float y) {
     }
 
     auto skip_note = [&](const Note& note) {
-        if (balloon_counter.has_value() && note.type == NoteType::BALLOON_HEAD && !other_notes.empty() && note.index == other_notes[0].index) {
+        // only the balloon being hit: after a pop the counter plays on while other_notes[0] is already the next balloon
+        if (is_balloon && balloon_counter.has_value() && note.type == NoteType::BALLOON_HEAD && !other_notes.empty() && note.index == other_notes[0].index) {
             return true;
         }
         if (kusudama_owner()->kusudama_counter.has_value() && note.type == NoteType::KUSUDAMA && !other_notes.empty() && note.index == other_notes[0].index) {
@@ -2080,7 +2278,7 @@ void Player::draw_modifiers(float y) {
 }
 
 void Player::draw_lane_cover(float y) {
-    if (!is_balloon) {
+    if (!is_balloon || (balloon_idle && !balloon_counter.has_value())) {
         if (is_2p) {
             chara->draw(tex.skin_config[SC::GAME_CHARA_P2].x, y + tex.skin_config[SC::GAME_CHARA_P2].y, 1.0f);
         } else {
@@ -2108,6 +2306,10 @@ void Player::draw_overlays(float y, const ray::Shader& mask_shader) {
         anim.draw(y, mask_shader);
     }
     for (GaugeHitEffect& anim : gauge_hit_effect) {
+        anim.draw(y);
+    }
+    score_counter.draw(y);
+    for (ScoreCounterAnimation& anim : base_score_list) {
         anim.draw(y);
     }
 
@@ -2139,7 +2341,9 @@ void Player::draw_overlays(float y, const ray::Shader& mask_shader) {
             if (const SkinInfo* p2 = tex.skin_entry("balloon_counter_2p_offset"))
                 rig_2p_y = p2->y;
         }
-        chara->draw(tex.skin_config[SC::GAME_CHARA_BALLOON].x, y + tex.skin_config[SC::GAME_CHARA_BALLOON].y + rig_2p_y, 1.0f);
+        if (!balloon_idle || balloon_counter.has_value()) {
+            chara->draw(tex.skin_config[SC::GAME_CHARA_BALLOON].x, y + tex.skin_config[SC::GAME_CHARA_BALLOON].y + rig_2p_y, 1.0f);
+        }
     }
 
     if (drumroll_counter.has_value()) {
@@ -2150,10 +2354,6 @@ void Player::draw_overlays(float y, const ray::Shader& mask_shader) {
     }
     if (kusudama_counter.has_value()) {
         kusudama_counter->draw();
-    }
-    score_counter.draw(y);
-    for (ScoreCounterAnimation& anim : base_score_list) {
-        anim.draw(y);
     }
     // Practice mode draws the lyric itself, after the large drums, so it is not hidden.
     if (!practice_lyric) draw_lyric(y);
@@ -2176,6 +2376,7 @@ void Player::seek_to(double resume_time) {
     draw_note_buffer.clear();
     barlines.clear();
     timeline_buffer.clear();
+    last_jpos_key = {-1e300, -1};
     draw_judge_list.clear();
     draw_drum_hit_list.clear();
     draw_arc_list.clear();
@@ -2202,8 +2403,6 @@ void Player::seek_to(double resume_time) {
         timeline_buffer.push_back(entry);
         int idx = (int)timeline_buffer.size() - 1;
         const size_t before = timeline_buffer.size();
-        handle_scroll_type_commands(resume_time, entry, idx);
-        if (timeline_buffer.size() != before) continue;
         handle_bpmchange(resume_time, entry, idx);
         if (timeline_buffer.size() != before) continue;
         handle_judgeposition(resume_time, entry, idx);
@@ -2213,6 +2412,8 @@ void Player::seek_to(double resume_time) {
         handle_branch_param(resume_time, entry, idx);
         if (timeline_buffer.size() != before) continue;
         handle_lyric(resume_time, entry, idx);
+        if (timeline_buffer.size() != before) continue;
+        handle_camera(resume_time, entry, idx);
         if (timeline_buffer.size() != before) continue;
         handle_section(resume_time, entry, idx);
     }

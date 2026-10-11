@@ -4,10 +4,6 @@
 #   checksums-windows.sha256    sha256sum-format, relative paths from install dir
 #   update-windows.tar.gz       binary + dlls + shader
 #
-# Skins with a .skin-repo file are updated by comparing against checksums.sha256
-# fetched from the skin repo's branch HEAD. No local version state is kept.
-# .skin-repo format: line 1 = repo URL, line 2 (optional) = branch (default: main)
-#
 # Usage (standalone):   powershell -ExecutionPolicy Bypass -File update.ps1
 # Usage (from game):    update.bat --wait-pid <PID>
 
@@ -26,17 +22,6 @@ New-Item -ItemType Directory -Path $TmpDir | Out-Null
 
 function Log { param($msg) Write-Host "[update] $msg" }
 function Die { param($msg) Write-Host "[update] Error: $msg" -ForegroundColor Red; exit 1 }
-
-function Get-SkinFileUrl {
-    param([string]$RepoUrl, [string]$Branch, [string]$FilePath)
-    $base = $RepoUrl -replace '\.git$', ''
-    if ($base -match 'github\.com') {
-        $ownerRepo = ($base -split 'github\.com/')[-1]
-        return "https://media.githubusercontent.com/media/$ownerRepo/$Branch/$FilePath"
-    } else {
-        return "$base/raw/branch/$Branch/$FilePath"
-    }
-}
 
 try {
     # --- Fetch release metadata ---
@@ -73,57 +58,13 @@ try {
         }
     }
 
-    # --- Check installed skins ---
-    # Fetch checksums.sha256 from each skin's repo and compare against local files.
-    $SkinUpdates = [System.Collections.Generic.List[object]]::new()
-    $SkinsDir = Join-Path $InstallDir "Skins"
-    if (Test-Path $SkinsDir) {
-        foreach ($skinDir in Get-ChildItem -Path $SkinsDir -Directory) {
-            $skinRepoFile = Join-Path $skinDir.FullName ".skin-repo"
-            if (-not (Test-Path $skinRepoFile)) { continue }
-
-            $lines   = @(Get-Content $skinRepoFile)
-            $repoUrl = $lines[0].Trim()
-            $branch  = if ($lines.Count -gt 1 -and $lines[1].Trim() -ne '') { $lines[1].Trim() } else { "main" }
-
-            $checksumsUrl      = Get-SkinFileUrl -RepoUrl $repoUrl -Branch $branch -FilePath "checksums.sha256"
-            $skinChecksumsPath = Join-Path $TmpDir "skin-checksums-$($skinDir.Name).sha256"
-            try {
-                Invoke-WebRequest -Uri $checksumsUrl -OutFile $skinChecksumsPath -TimeoutSec 30
-            } catch {
-                Log "Warning: could not fetch checksums for $($skinDir.Name) -- skipping"
-                continue
-            }
-
-            $skinNeedsUpdate = $false
-            foreach ($cline in Get-Content $skinChecksumsPath) {
-                $cparts = $cline -split '\s+', 2
-                if ($cparts.Count -lt 2) { continue }
-                $expectedHash = $cparts[0].ToUpper()
-                $relPath      = $cparts[1].TrimStart('*')
-                if ((Split-Path -Leaf $relPath) -eq "checksums.sha256") { continue }
-                $localFile    = Join-Path $skinDir.FullName ($relPath.Replace('/', '\'))
-
-                if (Test-Path $localFile) {
-                    $actualHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
-                    if ($actualHash -eq $expectedHash) { continue }
-                }
-                $skinNeedsUpdate = $true
-                break
-            }
-
-            if (-not $skinNeedsUpdate) { continue }
-            $SkinUpdates.Add(@($skinDir.FullName, $repoUrl, $branch, $skinChecksumsPath))
-        }
-    }
-
-    if (-not $NeedPackage -and $SkinUpdates.Count -eq 0) {
+    if (-not $NeedPackage) {
         Log "Already up to date."
         Set-Content $VersionFile $LatestReleaseId
         exit 0
     }
 
-    Log "Updates needed -- package: $([int]$NeedPackage) | skins: $($SkinUpdates.Count)"
+    Log "Updates needed -- package: $([int]$NeedPackage)"
 
     # --- Wait for game process if requested ---
     if ($WaitPid -ne "") {
@@ -133,54 +74,16 @@ try {
     }
 
     # --- Download and extract main package ---
-    if ($NeedPackage) {
-        if (-not $AssetMap.ContainsKey("update-windows.tar.gz")) {
-            Die "No update-windows.tar.gz in release $($Release.tag_name)"
-        }
-        $TarPath = Join-Path $TmpDir "update-windows.tar.gz"
-        Log "Downloading update-windows.tar.gz..."
-        Invoke-WebRequest -Uri $AssetMap["update-windows.tar.gz"] -OutFile $TarPath
-        Log "Extracting..."
-        & tar -xzf $TarPath -C $InstallDir
-        if ($LASTEXITCODE -ne 0) { Die "tar extraction failed" }
-        Log "Package applied."
+    if (-not $AssetMap.ContainsKey("update-windows.tar.gz")) {
+        Die "No update-windows.tar.gz in release $($Release.tag_name)"
     }
-
-    # --- Update skins ---
-    foreach ($update in $SkinUpdates) {
-        $skinDirPath, $repoUrl, $branch, $skinChecksumsPath = $update
-        $skinName = Split-Path -Leaf $skinDirPath
-        Log "Updating $skinName..."
-
-        $changed = 0
-        foreach ($cline in Get-Content $skinChecksumsPath) {
-            $cparts = $cline -split '\s+', 2
-            if ($cparts.Count -lt 2) { continue }
-            $expectedHash = $cparts[0].ToUpper()
-            $relPath      = $cparts[1].TrimStart('*')
-            if ((Split-Path -Leaf $relPath) -eq "checksums.sha256") { continue }
-            $localFile    = Join-Path $skinDirPath ($relPath.Replace('/', '\'))
-
-            if (Test-Path $localFile) {
-                $actualHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
-                if ($actualHash -eq $expectedHash) { continue }
-            }
-
-            $rawUrl    = Get-SkinFileUrl -RepoUrl $repoUrl -Branch $branch -FilePath $relPath
-            $parentDir = Split-Path -Parent $localFile
-            if (-not (Test-Path $parentDir)) { New-Item -ItemType Directory -Path $parentDir | Out-Null }
-            try {
-                Invoke-WebRequest -Uri $rawUrl -OutFile "$localFile.tmp"
-                Move-Item -Force "$localFile.tmp" $localFile
-                $changed++
-            } catch {
-                Log "Warning: failed to download $relPath"
-                Remove-Item -Force "$localFile.tmp" -ErrorAction SilentlyContinue
-            }
-        }
-
-        Log "$skinName`: $changed file(s) updated."
-    }
+    $TarPath = Join-Path $TmpDir "update-windows.tar.gz"
+    Log "Downloading update-windows.tar.gz..."
+    Invoke-WebRequest -Uri $AssetMap["update-windows.tar.gz"] -OutFile $TarPath
+    Log "Extracting..."
+    & tar -xzf $TarPath -C $InstallDir
+    if ($LASTEXITCODE -ne 0) { Die "tar extraction failed" }
+    Log "Package applied."
 
     Set-Content $VersionFile $LatestReleaseId
     Log "Update complete ($($Release.tag_name)). Restart YataiDON to apply."

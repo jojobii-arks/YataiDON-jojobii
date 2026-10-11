@@ -1,6 +1,7 @@
 #pragma once
 
 #include <toml++/toml.h>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,21 +16,31 @@ struct GeneralConfig {
     bool timer_frozen = false;
     bool song_timer = false;
     bool judge_counter = false;
+    bool show_timing_offset = false;
     std::string log_level;
     int practice_mode_bar_delay = 0;
     std::string score_method;
     bool display_bpm = false;
     int song_limit = 0;
     int webcam_number = -1;
-    int player_1_id = 1;
-    int player_2_id = 1;
     bool touch_input = false;
+    bool skin_updater = true;
+    bool fast_transitions = false;
+};
+
+struct CardReaderConfig {
+    bool enabled = true;
+    std::string port = "/dev/ttyUSB0";
+    int baudrate = 38400;
+    int poll_interval_ms = 1000;
 };
 
 struct NetworkConfig {
-    std::string access_code;
+    std::string access_code_1;
+    std::string access_code_2;
     bool online_play = false;
     bool sync_scores = false;
+    bool auto_login = false;
 };
 
 struct PathsConfig {
@@ -68,8 +79,19 @@ struct GamepadConfig {
     std::vector<int> right_kat;
 };
 
+struct MidiConfig {
+    // Case-sensitive substring of the MIDI port name; empty disables MIDI.
+    std::string device;
+    // MIDI channels are exposed to config as 1-16; 0 accepts any channel.
+    int channel = 0;
+    // Parallel arrays: MIDI note -> gamepad button number.
+    std::vector<int> notes;
+    std::vector<int> buttons;
+};
+
 struct AudioConfig {
     int device_type = 0;
+    std::string device;   // Output device name (empty = system default)
     int sample_rate = 44100;
     int buffer_size = 512;
     std::vector<int> asio_channel;
@@ -129,6 +151,7 @@ struct DrillConfig {
 
 struct Config {
     GeneralConfig general;
+    CardReaderConfig card_reader;
     NetworkConfig network;
     PathsConfig paths;
     KeysConfig keys;
@@ -136,6 +159,7 @@ struct Config {
     Keys2PConfig keys_2p;
     GamepadConfig gamepad_1p;
     GamepadConfig gamepad_2p;
+    MidiConfig midi;
     AudioConfig audio;
     VolumeConfig volume;
     VideoConfig video;
@@ -150,3 +174,7 @@ std::vector<int> parseIntArray(const toml::array& arr);
 Config get_config();
 
 void save_config(const Config& config);
+
+// Writes a default config.toml (or dev-config.toml) when none exists yet, so
+// the game ships without a bundled config and generates one on first boot.
+void ensure_config_file(const Config& config);

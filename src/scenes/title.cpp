@@ -2,7 +2,15 @@
 #include "../libs/global_data.h"
 #include "../libs/input.h"
 #include "../libs/filesystem.h"
+#include "../libs/config.h"
+#include "../libs/network.h"
 #include <random>
+
+#ifdef CARD_READER_ENABLED
+#include "../libs/optional/card_reader.h"
+static std::unique_ptr<card_reader::CardReader> g_card_reader;
+static double g_last_card_poll_ms = 0;
+#endif
 
 void TitleScreen::on_screen_start() {
     Screen::on_screen_start();
@@ -13,6 +21,25 @@ void TitleScreen::on_screen_start() {
     fade_out = dynamic_cast<FadeAnimation*>(tex.get_animation(13));
     text_overlay_fade = dynamic_cast<FadeAnimation*>(tex.get_animation(14));
     if (text_overlay_fade) text_overlay_fade->start();
+
+    // Session over: undo card-login access code overrides
+    for (int i = 0; i < 2; i++) {
+        if (!global_data.card_override[i]) continue;
+        (i == 0 ? global_data.config->network.access_code_1 : global_data.config->network.access_code_2) = global_data.card_prev_code[i];
+        global_data.card_override[i] = false;
+    }
+    scores_manager.player_1 = global_data.config->network.access_code_1;
+    scores_manager.player_2 = global_data.config->network.access_code_2;
+    global_data.card_reader_card_valid = false;
+    global_data.card_reader_card_id_hex.clear();
+
+#ifdef CARD_READER_ENABLED
+    // Card reader only matters when online (case 4: offline scan does nothing)
+    // Opened on a worker thread; update() starts polling once it is ready
+    if (global_data.config && global_data.config->network.online_play && global_data.config->card_reader.enabled) {
+        card_reader::reader_opener().request(global_data.config->card_reader.port, global_data.config->card_reader.baudrate);
+    }
+#endif
 }
 
 void TitleScreen::load_videos() {
@@ -58,6 +85,16 @@ Screens TitleScreen::on_screen_end(Screens next_screen) {
     reset_attract_objects();
     global_data.title_state = "";
     global_data.title_state_start_ms = 0.0;
+
+#ifdef CARD_READER_ENABLED
+    // Clean up card reader
+    if (g_card_reader) {
+        g_card_reader->stop_polling();
+        g_card_reader->led_reset();
+        g_card_reader.reset();
+    }
+#endif
+
     return Screen::on_screen_end(next_screen);
 }
 
@@ -69,6 +106,7 @@ void TitleScreen::scene_manager(double current_ms) {
             std::uniform_int_distribution<size_t> dist(0, op_video_list.size() - 1);
             fs::path chosen = op_video_list[dist(rng)];
             op_video.emplace(chosen);
+            op_video->set_volume(global_data.config->volume.attract_mode);
             op_video->start(current_ms);
         }
         op_video->update(current_ms);
@@ -93,6 +131,7 @@ void TitleScreen::scene_manager(double current_ms) {
             std::uniform_int_distribution<size_t> dist(0, attract_video_list.size() - 1);
             fs::path chosen = attract_video_list[dist(rng)];
             attract_video.emplace(chosen);
+            attract_video->set_volume(global_data.config->volume.attract_mode);
             attract_video->start(current_ms);
         }
         attract_video->update(current_ms);
@@ -126,9 +165,58 @@ std::optional<Screens> TitleScreen::update() {
         return on_screen_end(Screens::ENTRY);
     }
 
+#ifdef CARD_READER_ENABLED
+    if (!g_card_reader) {
+        if (auto opened = card_reader::reader_opener().take()) {
+            g_card_reader = std::move(*opened);
+            if (g_card_reader) {
+                g_card_reader->start_polling();
+                g_card_reader->set_led_color(255, 255, 255);  // White for polling
+                g_last_card_poll_ms = current_ms;
+                spdlog::info("Card reader initialized and polling started");
+            } else {
+                spdlog::warn("Failed to initialize card reader");
+            }
+        }
+    }
+    // Poll for cards if card reader is active
+    if (g_card_reader && g_card_reader->is_polling()) {
+        int poll_interval = global_data.config ? global_data.config->card_reader.poll_interval_ms : 100;
+        if (current_ms - g_last_card_poll_ms >= poll_interval) {
+            g_last_card_poll_ms = current_ms;
+            if (g_card_reader->poll_once()) {
+                const auto& card_info = g_card_reader->get_card_info();
+                if (card_info.valid && !card_info.card_id_hex.empty()) {
+                    // Card detected! Store the hex card ID and transition to entry screen
+                    // The server will convert hex to decimal access code
+                    global_data.card_reader_card_id_hex = card_info.card_id_hex;
+                    global_data.card_reader_card_valid = true;
+
+                    spdlog::info("Card detected (hex: {}), transitioning to entry screen",
+                                 card_info.card_id_hex);
+
+                    // Green LED for success
+                    g_card_reader->set_led_color(0, 255, 0);
+
+                    // Stop polling
+                    g_card_reader->stop_polling();
+
+                    // Start fade out to entry screen
+                    if (!fade_out->is_started) {
+                        fade_out->start();
+                        fade_out->unlock_input();
+                        audio.play_sound("don", VolumePreset::SOUND);
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     scene_manager(current_ms);
     if (is_l_don_pressed() || is_r_don_pressed()) {
-        fade_out->start();
+        if (!fade_out->is_started) fade_out->start();
+        fade_out->unlock_input();
         audio.play_sound("don", VolumePreset::SOUND);
     }
     return std::nullopt;

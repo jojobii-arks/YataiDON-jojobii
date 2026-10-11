@@ -50,6 +50,8 @@ private:
     int arc_points;
     int arc_duration;
     float current_progress;
+    double elapsed_ms;
+    bool note_finished_handled;
     double start_ms;
     PlayerNum player_num;
 
@@ -61,7 +63,9 @@ private:
     float control_y;
     float x_i;
     float y_i;
+    int firework_frames() const;
     TextureObject* t_note = nullptr;
+    TextureObject* t_firework = nullptr;
     TextureObject* t_rainbow_mask = nullptr;
 public:
     NoteType note_type;
@@ -74,4 +78,7 @@ public:
     void draw(float y, ray::Shader mask_shader);
 
     bool is_finished() const;
+
+    bool is_note_finished() const;
+    bool consume_note_finished();
 };

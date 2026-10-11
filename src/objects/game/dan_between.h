@@ -156,8 +156,8 @@ inline void DanBetween::draw(float lane_y) {
     }
 
     const int scissor_x = virtual_to_screen_x(mask_x);
-    const int win_w = ray::GetScreenWidth();
-    ray::BeginScissorMode(scissor_x, 0, std::max(0, win_w - scissor_x), ray::GetScreenHeight());
+    const int win_w = ray::GetRenderWidth();
+    ray::BeginScissorMode(scissor_x, 0, std::max(0, win_w - scissor_x), ray::GetRenderHeight());
 
     const float door_y = (float)door.y[0];
     const float door_h = (float)door.y2[0];

@@ -39,7 +39,8 @@ export interface AppConfig {
   catalogCachePath: string
   mergeOniUraDefault: boolean
   pollMs: number
-  playerId: number
+  /** Access-code player id (legacy int 1 migrated to "0"). */
+  playerId: string
 }
 
 export interface ProgressFilters {

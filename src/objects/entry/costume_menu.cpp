@@ -13,7 +13,6 @@ CostumeMenu::CostumeMenu(PlayerNum player_num) : player_num(player_num), is_2p(p
     float title_x = info.x;
     float title_y = info.y;
 
-    presets_enabled = tex.options[SCO::COSTUME_PRESET_SLOTS];
     t_item_box = is_2p ? tex.get_texture("costume_select/item_box_2p") : tex.get_texture("costume_select/item_box_1p");
 
     if (!load("CostumeMenu", "costume_menu", is_2p, text_str, title_x, title_y)) return;
@@ -207,7 +206,7 @@ void CostumeMenu::handle_input() {
             selected_index = (selected_index + 1) % NUM_ITEMS;
             audio.play_sound("kat", VolumePreset::SOUND);
         }
-        if (presets_enabled && selected_index != prev_index) {
+        if (selected_index != prev_index) {
             if (is_preset_item(ITEMS[selected_index])) {
                 apply_preset(ITEMS[selected_index]);
             } else if (preset_cos_id) {
@@ -236,7 +235,7 @@ void CostumeMenu::handle_input() {
                 }
                 costume_select_mode = true;
                 audio.play_sound("don", VolumePreset::SOUND);
-            } else if (presets_enabled && is_preset_item(ITEMS[selected_index])) {
+            } else if (is_preset_item(ITEMS[selected_index])) {
                 if (!preset_cos_id) apply_preset(ITEMS[selected_index]);
                 if (preset_cos_id) {
                     confirmed = true;

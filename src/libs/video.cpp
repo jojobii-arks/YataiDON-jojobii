@@ -1,4 +1,5 @@
 #include "video.h"
+#include "profiler.h"
 #include "audio.h"
 #include "texture.h"
 #include <spdlog/spdlog.h>
@@ -76,6 +77,7 @@ void VideoPlayer::audio_manager() {
 }
 
 void VideoPlayer::decode_loop() {
+    PROFILE_THREAD_NAME("video decode");
 #ifndef __EMSCRIPTEN__
     try {
         container->seek(0);

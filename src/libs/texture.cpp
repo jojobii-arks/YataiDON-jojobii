@@ -1,4 +1,5 @@
 #include "texture.h"
+#include "profiler.h"
 #include "global_data.h"
 #include "script.h"
 #include "filesystem.h"
@@ -20,19 +21,6 @@ inline double json_number(const Value& v, double fallback = 0.0) {
 
 inline double json_member(const Value& o, const char* key, double fallback) {
     return o.HasMember(key) ? json_number(o[key], fallback) : fallback;
-}
-
-// Two screens can share a subset name (e.g. both have a "notes" folder), in which
-// case they resolve to the very same "subset/name" key and the very same textures[]
-// entry. Refcount by key so unload_folder() only actually drops a texture once
-// every screen/subset that loaded it has unloaded it.
-std::unordered_map<std::string, int>& tex_id_refcount() {
-    static std::unordered_map<std::string, int> refcount;
-    return refcount;
-}
-std::unordered_map<std::string, std::unordered_set<std::string>>& subset_loaded_ids() {
-    static std::unordered_map<std::string, std::unordered_set<std::string>> ids;
-    return ids;
 }
 
 }  // namespace
@@ -93,13 +81,31 @@ void TextureWrapper::init(const fs::path& skin_path) {
         }
     };
 
-    // Load parent skin_config first so child values override.
-    parent_graphics_path = resolve_parent_graphics_path(graphics_path);
-    if (parent_graphics_path != graphics_path) {
-        auto parent_config = read_json_file(parent_graphics_path / "skin_config.json");
-
-        for (auto& m : parent_config.GetObject()) {
-            load_entry(m.name.GetString(), m.value, screen_scale);
+    // Ancestors (parent, its parent, ...), each scaled by this skin's width over its own
+    // (screen.width, default 1280). Their skin_config loads farthest first, so nearer values
+    // override, and the child's below overrides them all.
+    ancestor_graphics_paths.clear();
+    ancestor_scales.clear();
+    {
+        std::vector<fs::path> chain = resolve_skin_chain(graphics_path);
+        for (size_t i = 1; i < chain.size(); i++) {
+            float aw = 1280.0f;
+            try {
+                auto cfg = read_json_file(chain[i] / "skin_config.json");
+                if (cfg.HasMember("screen") && cfg["screen"].HasMember("width") && cfg["screen"]["width"].IsNumber())
+                    aw = cfg["screen"]["width"].GetFloat();
+            } catch (const std::exception& e) {
+                spdlog::warn("skin ancestor {}: {}", chain[i].string(), e.what());
+            }
+            ancestor_graphics_paths.push_back(chain[i]);
+            ancestor_scales.push_back(static_cast<float>(screen_width) / aw);
+        }
+    }
+    parent_graphics_path = ancestor_graphics_paths.empty() ? graphics_path : ancestor_graphics_paths.front();
+    for (size_t i = ancestor_graphics_paths.size(); i-- > 0;) {
+        auto ancestor_config = read_json_file(ancestor_graphics_paths[i] / "skin_config.json");
+        for (auto& m : ancestor_config.GetObject()) {
+            load_entry(m.name.GetString(), m.value, ancestor_scales[i]);
         }
     }
 
@@ -134,13 +140,14 @@ void TextureWrapper::init(const fs::path& skin_path) {
 }
 
 void TextureWrapper::unload_textures() {
+    lua_texture_lookup.clear();
     textures.clear();
     loaded_subsets.clear();
     animations.clear();
     copied_animations.clear();
     screen_animations.clear();
-    subset_loaded_ids().clear();
-    tex_id_refcount().clear();
+    subset_loaded_ids.clear();
+    tex_id_refcount.clear();
     debug_draw_log.clear();
     debug_draw_log_prev.clear();
 }
@@ -165,42 +172,8 @@ BaseAnimation* TextureWrapper::get_animation(const int id, bool is_copy) {
 
 BaseAnimation* TextureWrapper::get_animation(const int id, const std::string& screen_name) {
     if (screen_animations.find(screen_name) == screen_animations.end()) {
-        fs::path screen_path        = graphics_path / screen_name;
-        fs::path parent_screen_path = parent_graphics_path / screen_name;
-        fs::path anim_file          = screen_path / "animation.json";
-        fs::path parent_anim_file   = parent_screen_path / "animation.json";
-
-        if (fs::exists(anim_file)) {
-            AnimationParser parser;
-            screen_animations[screen_name] = parser.parse_animations(read_json_file(anim_file));
-        } else if (parent_graphics_path != graphics_path && fs::exists(parent_anim_file)) {
-            auto anim_config = read_json_file(parent_anim_file);
-            if (anim_config.IsArray()) {
-                for (SizeType i = 0; i < anim_config.Size(); i++) {
-                    auto& anim = anim_config[i];
-                    if (anim.HasMember("total_distance") && !anim["total_distance"].IsObject()) {
-                        if (anim["total_distance"].IsInt())
-                            anim["total_distance"].SetInt(static_cast<int>(json_number(anim["total_distance"]) * screen_scale));
-                        else if (anim["total_distance"].IsDouble())
-                            anim["total_distance"].SetDouble(anim["total_distance"].GetDouble() * screen_scale);
-                    }
-                    if (anim.HasMember("waypoints") && anim["waypoints"].IsArray()) {
-                        for (auto& wp : anim["waypoints"].GetArray()) {
-                            if (!wp.IsObject() || !wp.HasMember("value")) continue;
-                            if (wp["value"].IsInt())
-                                wp["value"].SetInt(static_cast<int>(json_number(wp["value"]) * screen_scale));
-                            else if (wp["value"].IsDouble())
-                                wp["value"].SetDouble(wp["value"].GetDouble() * screen_scale);
-                        }
-                    }
-                    if (anim.HasMember("start_position") && !anim["start_position"].IsObject()) {
-                        if (anim["start_position"].IsInt())
-                            anim["start_position"].SetInt(static_cast<int>(json_number(anim["start_position"]) * screen_scale));
-                        else if (anim["start_position"].IsDouble())
-                            anim["start_position"].SetDouble(anim["start_position"].GetDouble() * screen_scale);
-                    }
-                }
-            }
+        Document anim_config;
+        if (read_screen_animations(screen_name, anim_config)) {
             AnimationParser parser;
             screen_animations[screen_name] = parser.parse_animations(anim_config);
         } else {
@@ -278,7 +251,7 @@ void TextureWrapper::read_tex_obj_data(const Value& tex_mapping, TextureObject* 
             if (mapping.HasMember("frame_order") && mapping["frame_order"].IsArray()) {
                 auto* framed = dynamic_cast<FramedTexture*>(tex_obj);
                 if (framed) {
-                    std::vector<ray::Texture2D> reordered;
+                    std::vector<std::shared_ptr<ray::Texture2D>> reordered;
                     for (SizeType j = 0; j < mapping["frame_order"].Size(); j++) {
                         int idx = static_cast<int>(json_number(mapping["frame_order"][j]));
                         if (idx < 0 || idx >= static_cast<int>(framed->textures.size())) {
@@ -331,7 +304,7 @@ void TextureWrapper::read_tex_obj_data(const Value& tex_mapping, TextureObject* 
         if (tex_mapping.HasMember("frame_order") && tex_mapping["frame_order"].IsArray()) {
             auto* framed = dynamic_cast<FramedTexture*>(tex_obj);
             if (framed) {
-                std::vector<ray::Texture2D> reordered;
+                std::vector<std::shared_ptr<ray::Texture2D>> reordered;
                 for (SizeType j = 0; j < tex_mapping["frame_order"].Size(); j++) {
                     int idx = static_cast<int>(json_number(tex_mapping["frame_order"][j]));
                     if (idx < 0 || idx >= static_cast<int>(framed->textures.size())) {
@@ -345,11 +318,7 @@ void TextureWrapper::read_tex_obj_data(const Value& tex_mapping, TextureObject* 
         }
     }
 
-    // Crop-based sub-sprites share an atlas with neighbors packed edge-to-edge (no padding),
-    // so bilinear/mipmap sampling bleeds neighboring sprite pixels in at the crop boundary.
-    // Point filtering samples a single texel and never blends across that boundary.
-    ray::TextureFilter filter = tex_obj->crop_data.has_value() ? ray::TEXTURE_FILTER_POINT
-                                                                 : ray::TEXTURE_FILTER_BILINEAR;
+    ray::TextureFilter filter = ray::TEXTURE_FILTER_BILINEAR;
     for (int i = 0; i < tex_obj->frame_count(); i++) {
         if (const ray::Texture2D* t = tex_obj->frame_texture(i)) {
             SetTextureFilter(*const_cast<ray::Texture2D*>(t), filter);
@@ -357,55 +326,43 @@ void TextureWrapper::read_tex_obj_data(const Value& tex_mapping, TextureObject* 
     }
 }
 
-void TextureWrapper::load_animations(const std::string& screen_name) {
-    fs::path screen_path = graphics_path / screen_name;
-    fs::path parent_screen_path = parent_graphics_path / screen_name;
-    fs::path anim_file = screen_path / "animation.json";
-    fs::path parent_anim_file = parent_screen_path / "animation.json";
-
-    if (fs::exists(anim_file)) {
-        auto anim_config = read_json_file(anim_file);
-
-        AnimationParser parser;
-        animations = parser.parse_animations(anim_config);
-        spdlog::info("Animations loaded for screen: {}", screen_name);
-    } else if (parent_graphics_path != graphics_path && fs::exists(parent_anim_file)) {
-        auto anim_config = read_json_file(parent_anim_file);
-
-        // Scale total_distance values
-        if (anim_config.IsArray()) {
-            for (SizeType i = 0; i < anim_config.Size(); i++) {
-                Value& anim = anim_config[i];
-                if (anim.HasMember("total_distance") && !anim["total_distance"].IsObject()) {
-                    if (anim["total_distance"].IsInt()) {
-                        int val = static_cast<int>(json_number(anim["total_distance"]));
-                        anim["total_distance"].SetInt(static_cast<int>(val * screen_scale));
-                    } else if (anim["total_distance"].IsDouble()) {
-                        double val = anim["total_distance"].GetDouble();
-                        anim["total_distance"].SetDouble(val * screen_scale);
-                    }
-                }
-                if (anim.HasMember("start_position") && !anim["start_position"].IsObject()) {
-                    if (anim["start_position"].IsInt()) {
-                        int val = static_cast<int>(json_number(anim["start_position"]));
-                        anim["start_position"].SetInt(static_cast<int>(val * screen_scale));
-                    } else if (anim["start_position"].IsDouble()) {
-                        double val = anim["start_position"].GetDouble();
-                        anim["start_position"].SetDouble(val * screen_scale);
-                    }
-                }
+bool TextureWrapper::read_screen_animations(const std::string& screen_name, Document& out) {
+    fs::path own = graphics_path / screen_name / "animation.json";
+    if (fs::exists(own)) {
+        out = read_json_file(own);
+        return true;
+    }
+    for (size_t i = 0; i < ancestor_graphics_paths.size(); i++) {
+        fs::path file = ancestor_graphics_paths[i] / screen_name / "animation.json";
+        if (!fs::exists(file)) continue;
+        out = read_json_file(file);
+        const float scale = ancestor_scales[i];
+        auto scale_number = [scale](Value& v) {
+            if (v.IsInt()) v.SetInt(static_cast<int>(json_number(v) * scale));
+            else if (v.IsDouble()) v.SetDouble(v.GetDouble() * scale);
+        };
+        if (out.IsArray()) {
+            for (SizeType k = 0; k < out.Size(); k++) {
+                Value& anim = out[k];
+                if (anim.HasMember("total_distance") && !anim["total_distance"].IsObject()) scale_number(anim["total_distance"]);
+                if (anim.HasMember("start_position") && !anim["start_position"].IsObject()) scale_number(anim["start_position"]);
                 if (anim.HasMember("waypoints") && anim["waypoints"].IsArray()) {
                     for (auto& wp : anim["waypoints"].GetArray()) {
-                        if (!wp.IsObject() || !wp.HasMember("value")) continue;
-                        if (wp["value"].IsInt())
-                            wp["value"].SetInt(static_cast<int>(json_number(wp["value"]) * screen_scale));
-                        else if (wp["value"].IsDouble())
-                            wp["value"].SetDouble(wp["value"].GetDouble() * screen_scale);
+                        if (wp.IsObject() && wp.HasMember("value")) scale_number(wp["value"]);
                     }
                 }
             }
         }
+        return true;
+    }
+    return false;
+}
 
+void TextureWrapper::load_animations(const std::string& screen_name) {
+    PROFILE_SCOPE();
+    PROFILE_ZONE_TEXT(screen_name);
+    Document anim_config;
+    if (read_screen_animations(screen_name, anim_config)) {
         AnimationParser parser;
         animations = parser.parse_animations(anim_config);
         spdlog::info("Animations loaded for screen: {}", screen_name);
@@ -415,6 +372,15 @@ void TextureWrapper::load_animations(const std::string& screen_name) {
 std::unordered_map<std::string, std::weak_ptr<TextureObject>>& tex_object_cache() {
     static std::unordered_map<std::string, std::weak_ptr<TextureObject>> cache;
     return cache;
+}
+
+std::shared_ptr<ray::Texture2D> shared_texture(ray::Texture2D tex) {
+    return std::shared_ptr<ray::Texture2D>(
+        new ray::Texture2D(tex),
+        [](ray::Texture2D* p) {
+            if (p->id != 0) ray::UnloadTexture(*p);
+            delete p;
+        });
 }
 
 void decode_images_parallel(const std::vector<fs::path>& files, std::vector<ray::Image>& out) {
@@ -482,6 +448,7 @@ std::unordered_set<std::string> overridden_names(const fs::path& child_folder) {
 }
 
 void TextureWrapper::load_folder(const std::string& screen_name, const std::string& subset) {
+    lua_texture_lookup.clear();
     // Subset leaf name is the key prefix used in textures[] (e.g. "notes_nijiiro" from "game/notes_nijiiro")
     const std::string subset_key = fs::path(subset).filename().string();
     const std::string dedup_key = screen_name + "/" + subset_key;
@@ -513,6 +480,16 @@ void TextureWrapper::load_folder(const std::string& screen_name, const std::stri
 
             std::vector<PendingTex> pending;
             std::vector<fs::path> files;
+            std::unordered_map<std::string, size_t> file_index;
+            auto push_file = [&](const fs::path& path) -> size_t {
+                std::string key = path.string();
+                auto it = file_index.find(key);
+                if (it != file_index.end()) return it->second;
+                size_t idx = files.size();
+                files.push_back(path);
+                file_index.emplace(std::move(key), idx);
+                return idx;
+            };
 
             for (auto& m : tex_config.GetObject()) {
                 std::string tex_name = m.name.GetString();
@@ -541,13 +518,14 @@ void TextureWrapper::load_folder(const std::string& screen_name, const std::stri
 
                 if (!file_override && fs::is_directory(tex_dir)) {
                     auto frames = sorted_frames(tex_dir);
+                    size_t first = files.size();
+                    for (const auto& frame : frames) push_file(frame);
                     pending.push_back({tex_id, tex_name, &m.value, cache_key,
-                                       files.size(), frames.size(), true});
-                    files.insert(files.end(), frames.begin(), frames.end());
+                                       first, frames.size(), true});
                 } else if (fs::exists(tex_file)) {
+                    size_t first = push_file(tex_file);
                     pending.push_back({tex_id, tex_name, &m.value, cache_key,
-                                       files.size(), size_t{1}, false});
-                    files.push_back(tex_file);
+                                       first, size_t{1}, false});
                 } else {
                     auto existing = textures.find(tex_id);
                     if (existing != textures.end()) {
@@ -565,34 +543,53 @@ void TextureWrapper::load_folder(const std::string& screen_name, const std::stri
             decode_images_parallel(files, images);
 
             try {
+                // GPU textures indexed by file, so keys that share one atlas PNG
+                // (via "file" + "crop") upload it once and share the texture.
+                std::vector<std::shared_ptr<ray::Texture2D>> gpu(files.size());
                 for (const auto& p : pending) {
                     bool ok = true;
-                    std::vector<ray::Texture2D> texs;
+                    std::vector<std::shared_ptr<ray::Texture2D>> texs;
                     texs.reserve(p.file_count);
                     for (size_t i = 0; i < p.file_count; ++i) {
-                        const ray::Image& img = images[p.first_file + i];
-                        if (!img.data) {
-                            spdlog::error("Failed to decode image for texture {}: Frame {}", p.name, i);
-                            ok = false;
-                            continue;
+                        size_t fi = p.first_file + i;
+                        std::shared_ptr<ray::Texture2D> tex = gpu[fi];
+                        if (!tex) {
+                            const ray::Image& img = images[fi];
+                            if (!img.data) {
+                                spdlog::error("Failed to decode image for texture {}: Frame {}", p.name, i);
+                                ok = false;
+                            } else {
+                                ray::Texture2D t = ray::LoadTextureFromImage(img);
+                                if (!ray::IsTextureValid(t)) {
+                                    spdlog::error("Failed to load texture {}: Frame {}", p.name, i);
+                                    ok = false;
+                                } else {
+                                    tex = shared_texture(t);
+                                    gpu[fi] = tex;
+                                }
+                            }
                         }
-                        ray::Texture2D t = ray::LoadTextureFromImage(img);
-                        if (!ray::IsTextureValid(t)) {
-                            spdlog::error("Failed to load texture {}: Frame {}", p.name, i);
-                            ok = false;
-                        }
-                        texs.push_back(t);
+                        texs.push_back(std::move(tex));
                     }
-                    if (!ok) {
-                        for (auto& t : texs) if (ray::IsTextureValid(t)) ray::UnloadTexture(t);
-                        continue;
-                    }
+                    if (!ok) continue;
 
                     std::shared_ptr<TextureObject> obj;
-                    if (p.framed) obj = std::make_shared<FramedTexture>(p.id, texs);
+                    if (p.framed) obj = std::make_shared<FramedTexture>(p.id, std::move(texs));
                     else          obj = std::make_shared<SingleTexture>(p.id, texs[0]);
 
                     read_tex_obj_data(*p.mapping, obj.get(), tex_scale);
+
+                    if (!p.framed && !obj->crop_data.has_value() &&
+                        p.mapping->IsObject() && !p.mapping->HasMember("x2")) {
+                        const ray::Image& img = images[p.first_file];
+                        if (img.data) {
+                            const ray::Rectangle border = ray::GetImageAlphaBorder(img, 0.0f);
+                            if (border.width > 0.0f) {
+                                obj->opaque_right = (border.x + border.width) * tex_scale;
+                            }
+                        }
+                    }
+
                     textures[p.id] = obj;
                     cache[p.cache_key] = obj;
                     ids_this_call.insert(p.id);
@@ -615,31 +612,38 @@ void TextureWrapper::load_folder(const std::string& screen_name, const std::stri
         }
     };
 
-    const bool child_has_folder =
-        parent_graphics_path == graphics_path ||
-        fs::exists(graphics_path / screen_name / subset / "texture.json");
-
-    if (parent_graphics_path != graphics_path &&
-        fs::exists(parent_graphics_path / screen_name / subset / "texture.json")) {
-        std::unordered_set<std::string> overridden;
-        if (child_has_folder)
-            overridden = overridden_names(graphics_path / screen_name / subset);
-        load_from_path(parent_graphics_path / screen_name / subset, screen_scale, &overridden);
+    // Farthest ancestor first, child last (later loads overwrite), each ancestor skipping
+    // the names already provided by the child or a closer ancestor.
+    const fs::path own_dir = graphics_path / screen_name / subset;
+    const bool child_has_folder = ancestor_graphics_paths.empty() || fs::exists(own_dir / "texture.json");
+    std::vector<std::unordered_set<std::string>> skips(ancestor_graphics_paths.size());
+    std::unordered_set<std::string> claimed;
+    if (child_has_folder && !ancestor_graphics_paths.empty()) claimed = overridden_names(own_dir);
+    for (size_t i = 0; i < ancestor_graphics_paths.size(); i++) {
+        const fs::path dir = ancestor_graphics_paths[i] / screen_name / subset;
+        skips[i] = claimed;
+        if (fs::exists(dir / "texture.json"))
+            for (const std::string& n : overridden_names(dir)) claimed.insert(n);
+    }
+    for (size_t i = ancestor_graphics_paths.size(); i-- > 0;) {
+        const fs::path dir = ancestor_graphics_paths[i] / screen_name / subset;
+        if (fs::exists(dir / "texture.json")) load_from_path(dir, ancestor_scales[i], &skips[i]);
     }
     if (child_has_folder) {
-        load_from_path(graphics_path / screen_name / subset, 1.0f, nullptr);
+        load_from_path(own_dir, 1.0f, nullptr);
     }
 
     if (loaded_count == 0) {
         spdlog::error("No textures loaded for {}/{}", screen_name, subset);
     } else {
         loaded_subsets.insert(dedup_key);
-        subset_loaded_ids()[dedup_key] = ids_this_call;
-        for (const std::string& id : ids_this_call) ++tex_id_refcount()[id];
+        subset_loaded_ids[dedup_key] = ids_this_call;
+        for (const std::string& id : ids_this_call) ++tex_id_refcount[id];
     }
 }
 
 void TextureWrapper::unload_folder(const std::string& screen_name, const std::string& subset) {
+    lua_texture_lookup.clear();
     const std::string subset_key = fs::path(subset).filename().string();
     const std::string dedup_key = screen_name + "/" + subset_key;
 
@@ -648,9 +652,9 @@ void TextureWrapper::unload_folder(const std::string& screen_name, const std::st
     // A subset name can be shared by several screens (they resolve to the same
     // "subset/name" keys), so only drop a texture once every
     // screen/subset that loaded it has also unloaded it.
-    auto& refcount = tex_id_refcount();
-    auto ids_it = subset_loaded_ids().find(dedup_key);
-    if (ids_it != subset_loaded_ids().end()) {
+    auto& refcount = tex_id_refcount;
+    auto ids_it = subset_loaded_ids.find(dedup_key);
+    if (ids_it != subset_loaded_ids.end()) {
         for (const std::string& id : ids_it->second) {
             auto rc_it = refcount.find(id);
             if (rc_it == refcount.end()) continue;
@@ -659,7 +663,7 @@ void TextureWrapper::unload_folder(const std::string& screen_name, const std::st
                 refcount.erase(rc_it);
             }
         }
-        subset_loaded_ids().erase(ids_it);
+        subset_loaded_ids.erase(ids_it);
     }
 
     loaded_subsets.erase(dedup_key);
@@ -667,30 +671,24 @@ void TextureWrapper::unload_folder(const std::string& screen_name, const std::st
 }
 
 void TextureWrapper::load_screen_textures(const std::string& screen_name) {
-    fs::path screen_path = graphics_path / screen_name;
-    fs::path parent_screen_path = parent_graphics_path / screen_name;
+    PROFILE_SCOPE();
+    PROFILE_ZONE_TEXT(screen_name);
+    std::vector<fs::path> roots{graphics_path};
+    roots.insert(roots.end(), ancestor_graphics_paths.begin(), ancestor_graphics_paths.end());
+    std::vector<fs::path> screen_dirs;
+    for (const fs::path& root : roots)
+        if (fs::exists(root / screen_name)) screen_dirs.push_back(root / screen_name);
 
-    bool child_exists = fs::exists(screen_path);
-    bool parent_exists = parent_graphics_path != graphics_path && fs::exists(parent_screen_path);
-
-    if (!child_exists && !parent_exists) {
+    if (screen_dirs.empty()) {
         spdlog::warn("Textures for Screen {} do not exist", screen_name);
         return;
     }
 
     load_animations(screen_name);
 
-    if (child_exists) {
-        for (const auto& entry : fs::directory_iterator(screen_path)) {
-            if (entry.is_directory()) {
-                load_folder(screen_name, entry.path().filename().string());
-            }
-        }
-    }
-
-    // Load subsets from parent that are not present in the child skin
-    if (parent_exists) {
-        for (const auto& entry : fs::directory_iterator(parent_screen_path)) {
+    // Subsets of the child and every ancestor (load_folder dedups by screen/subset)
+    for (const fs::path& dir : screen_dirs) {
+        for (const auto& entry : fs::directory_iterator(dir)) {
             if (entry.is_directory()) {
                 load_folder(screen_name, entry.path().filename().string());
             }
@@ -719,14 +717,18 @@ std::vector<std::string> TextureWrapper::language_variants(const std::string& na
 }
 
 TextureObject* TextureWrapper::get_texture(const std::string& name) {
+    return get_texture_shared(name).get();
+}
+
+std::shared_ptr<TextureObject> TextureWrapper::get_texture_shared(const std::string& name) {
     // first variant that is actually loaded, else fall back to the warning placeholder
     for (const auto& v : language_variants(name)) {
         auto it = textures.find(v);
-        if (it != textures.end()) return it->second.get();
+        if (it != textures.end()) return it->second;
     }
     spdlog::warn("Texture not found: {}", name);
     auto it = textures.find("kidou/warning");
-    return it != textures.end() ? it->second.get() : nullptr;
+    return it != textures.end() ? it->second : nullptr;
 }
 
 bool TextureWrapper::has_texture(const std::string& name) {
@@ -750,6 +752,10 @@ void TextureWrapper::draw_texture(TextureObject* tex_obj, const DrawTextureParam
     } else if (tex_obj->crop_data.has_value()) {
         try {
             source_rect = tex_obj->crop_data->at(params.frame);
+            source_rect.width  -= 1.0f;
+            source_rect.height -= 1.0f;
+            source_rect.x += mirror_x < 0 ? -0.5f : 0.5f;
+            source_rect.y += mirror_y < 0 ? -0.5f : 0.5f;
             source_rect.width  *= mirror_x;
             source_rect.height *= mirror_y;
         } catch (const std::out_of_range& e) {

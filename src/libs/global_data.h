@@ -174,7 +174,10 @@ struct ResultData {
     int max_combo = 0;
     int total_drumroll = 0;
     float gauge_length = 0.0f;
+    bool cleared = true;
     int prev_score = 0;
+    double hit_offset_sum_ms = 0.0;
+    int hit_offset_count = 0;
 };
 
 struct SessionData {
@@ -231,6 +234,11 @@ struct GlobalData {
     bool returned_from_result = false;
     bool entry_join_pending = false;
     PlayerNum entry_joined_seat = PlayerNum::P1;
+    // Card reader
+    std::string card_reader_card_id_hex;  // 16-char hex card ID
+    bool card_reader_card_valid = false;
+    std::string card_prev_code[2];
+    bool card_override[2] = {false, false};
     CameraConfig camera;
     Config* config = nullptr;  // Using pointer, initialize appropriately
     int total_songs = 0;
@@ -247,15 +255,13 @@ struct GlobalData {
 };
 
 void reset_session();
-int get_player_id(PlayerNum player_num);
+std::string get_player_id(PlayerNum player_num);
 void load_skin();
 void unload_skin();
-// Pair of calls around a skin reload (unload_skin()+load_skin()): every
-// screen except the caller holds sol::table/sol::protected_function members
-// tied to the current lua_State. Call drop_... before unload_skin() while
-// that state is still open (destroying them after close use-after-frees
-// the registry -- SIGSEGV in lua_rawgeti/luaL_unref), and reload_... after
-// load_skin() to rebuild them against the new state.
+
+void queue_window_resize(int width, int height);
+bool apply_queued_window_resize();
+
 void drop_other_screens_for_skin_reload();
 void reload_skin_screens();
 

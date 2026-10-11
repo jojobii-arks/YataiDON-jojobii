@@ -3,7 +3,6 @@
 #include <cmath>
 #include "../../../libs/text.h"
 #include "../../enums.h"
-#include "box_yellow.h"
 
 struct BoxDef {
     std::string name;
@@ -70,12 +69,9 @@ public:
     virtual void preregister_text();
     virtual void get_scores() {}
     virtual void draw_score_history() {}
-    virtual void draw_diff_select();
-    virtual void draw_diff_select_bg() {}
 
     virtual void reset();
 
-    virtual void load_textures();
     void set_position(float target_position);
     virtual void expand_box();
     virtual void close_box();
@@ -86,14 +82,13 @@ public:
     void fade_in(float delay);
     void fade_out();
 
-    void move_box(float target_position, float duration);
+    void move_box(float target_position, float duration, float delay = 0.0f,
+                  std::optional<EaseType> ease = EaseType::Cubic);
     virtual void update(double current_ms);
 
-    virtual void draw();
-
     const char* draw_state() const {
-        if (yellow_box.has_value() && yellow_box->is_diff_select) return "diff_select";
-        if (yellow_box.has_value() && yellow_box_opened) return "open";
+        if (yellow_box_active && is_diff_select) return "diff_select";
+        if (yellow_box_active && yellow_box_opened) return "open";
         return "closed";
     }
     virtual const char* lua_kind() const { return "box"; }
@@ -104,6 +99,14 @@ public:
         return std::sin(deg * 3.14159265f / 180.0f) * 62.0f;
     }
     OutlinedText* name_text() const { return name.get(); }
+
+    // The base/folder boards recolour their green folder texture through a shader when a
+    // genre carries a custom box/back colour. Lua skins cannot express a shader, so the
+    // recolor is exposed as begin/end guards wrapping the same draw_texture calls the skin
+    // already makes (see draw_closed() / draw_open_bg()).
+    bool has_recolor() const { return shader_loaded && texture_index == TextureIndex::NONE; }
+    void begin_recolor() { if (shader_loaded) ray::BeginShaderMode(shader); }
+    void end_recolor()   { if (shader_loaded) ray::EndShaderMode(); }
 
     OutlinedText* horizontal_name() {
         if (!horizontal_name_cache) {
@@ -126,17 +129,6 @@ public:
     }
 
 protected:
-    TextureObject* t_shadow_bottom_left = nullptr;
-    TextureObject* t_shadow_bottom = nullptr;
-    TextureObject* t_shadow_bottom_right = nullptr;
-    TextureObject* t_shadow_right = nullptr;
-    TextureObject* t_shadow_top_right = nullptr;
-    TextureObject* t_folder_texture_left = nullptr;
-    TextureObject* t_folder_texture = nullptr;
-    TextureObject* t_folder_texture_right = nullptr;
-    TextureObject* t_genre_overlay = nullptr;
-    TextureObject* t_diff_overlay = nullptr;
-
     std::unique_ptr<MoveAnimation> move;
 
     ray::Shader shader;
@@ -146,12 +138,16 @@ protected:
     std::unique_ptr<OutlinedText> horizontal_name_cache;
     std::unique_ptr<OutlinedText> horizontal_name_large_cache;
 
-    std::optional<YellowBox> yellow_box;
+    // Box state: whether the box is expanded/opened and in diff-select. The yellow-box
+    // geometry and animation driving now live in Lua; the engine only tracks the state and
+    // derives the box bounds from the (Lua-advanced) animation attributes.
+    bool yellow_box_active = false;
     bool yellow_box_opened = false;
+    bool is_diff_select = false;
+    float yellow_right_width = 0.0f;   // yellow_box_right texture width (non-diff right bound)
+    float folder_texture_left_width = 0.0f;   // closed-box left/right bounds
+    float folder_texture_right_width = 0.0f;
 
     float target_position;
     double bar_open_started_at = 0.0;
-
-    virtual void draw_closed();
-    virtual void draw_open();
 };

@@ -1,3 +1,4 @@
+#include "../libs/text.h"
 #include "game_dan.h"
 #include <algorithm>
 #include "../libs/input.h"
@@ -20,12 +21,13 @@ void DanGameScreen::on_screen_start() {
 
     JudgePos::X = tex.skin_config[SC::JUDGE_POS].x;
     JudgePos::Y = tex.skin_config[SC::JUDGE_POS].y;
+    TJAParser::jpos_field_width = (tex.screen_width - JudgePos::X) / tex.screen_scale;
 
     auto rainbow_mask = std::dynamic_pointer_cast<SingleTexture>(tex.textures["balloon/rainbow_mask"]);
     auto rainbow      = std::dynamic_pointer_cast<SingleTexture>(tex.textures["balloon/rainbow"]);
     if (rainbow_mask && rainbow) {
-        SetShaderValueTexture(mask_shader, GetShaderLocation(mask_shader, "texture0"), rainbow_mask->texture);
-        SetShaderValueTexture(mask_shader, GetShaderLocation(mask_shader, "texture1"), rainbow->texture);
+        SetShaderValueTexture(mask_shader, GetShaderLocation(mask_shader, "texture0"), *rainbow_mask->texture);
+        SetShaderValueTexture(mask_shader, GetShaderLocation(mask_shader, "texture1"), *rainbow->texture);
     }
 
     init_dan();
@@ -175,8 +177,8 @@ void DanGameScreen::init_dan() {
     std::string title = sd.song_title;
     hori_name = std::make_unique<OutlinedText>(title, tex.skin_config[SC::DAN_TITLE].font_size, ray::WHITE, ray::BLACK, false);
 
-    current_song_title = parser->metadata.title.count(lang) ? parser->metadata.title.at(lang) : parser->metadata.title.at("en");
-    std::string subtitle = parser->metadata.subtitle.count(lang) ? parser->metadata.subtitle.at(lang) : "";
+    current_song_title = localized_text(parser->metadata.title, lang, LocalizedTextFallback::REQUIRED_ENGLISH);
+    std::string subtitle = localized_text(parser->metadata.subtitle, lang, LocalizedTextFallback::NONE);
     song_info = SongInfo(current_song_title, subtitle, parser->metadata.subtitle_full_display, first.genre_index - 1, 1);
 
     start_ms = get_current_ms() - parser->metadata.offset * 1000 - (double)global_data.config->general.audio_offset;
@@ -204,8 +206,8 @@ void DanGameScreen::change_song() {
     init_skip();
 
     const std::string& lang = global_data.config->general.language;
-    current_song_title = parser->metadata.title.count(lang) ? parser->metadata.title.at(lang) : parser->metadata.title.at("en");
-    std::string subtitle = parser->metadata.subtitle.count(lang) ? parser->metadata.subtitle.at(lang) : "";
+    current_song_title = localized_text(parser->metadata.title, lang, LocalizedTextFallback::REQUIRED_ENGLISH);
+    std::string subtitle = localized_text(parser->metadata.subtitle, lang, LocalizedTextFallback::NONE);
     song_info = SongInfo(current_song_title, subtitle, parser->metadata.subtitle_full_display, entry.genre_index - 1, song_index + 1);
 
     between.start(get_current_ms(), current_song_title, subtitle,
@@ -231,9 +233,7 @@ void DanGameScreen::fill_unplayed_songs() {
         try {
             SongParser sp(entry.song_path);
             const auto& titles = sp.metadata.title;
-            res.song_title = titles.count(lang) ? titles.at(lang)
-                           : titles.count("en")  ? titles.at("en")
-                           : titles.empty()      ? "" : titles.begin()->second;
+            res.song_title = localized_text(titles, lang, LocalizedTextFallback::ENGLISH_OR_FIRST);
         } catch (...) {
             spdlog::warn("Dan result: could not read {}", entry.song_path.string());
         }
@@ -529,7 +529,10 @@ Screens DanGameScreen::on_screen_end(Screens next_screen) {
 }
 
 std::optional<Screens> DanGameScreen::update() {
-    Screen::update();
+    if (auto init = Screen::update()) {
+        return init;
+    }
+
     double current_ms = get_current_ms();
     allnet_indicator.update(current_ms);
 

@@ -96,6 +96,6 @@ void JudgeCounter::draw() {
 
     draw_counter(drumrolls,
                  tex.skin_config[SC::JUDGE_COUNTER_2].x,
-                 tex.skin_config[SC::JUDGE_COUNTER_4].y,
+                 tex.skin_config[SC::JUDGE_COUNTER_4].width,
                  margin, white);
 }

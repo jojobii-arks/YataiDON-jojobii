@@ -3,7 +3,7 @@
 #include <chrono>
 
 #ifdef YATAIDON_PLATFORM_IOS
-#include "../platform/ios.h"
+#include "../platform/platform_ios.h"
 #endif
 
 inline double get_current_ms() {

@@ -5,6 +5,7 @@
 #include "../../libs/script.h"
 #include "../../libs/filesystem.h"
 #include "../../libs/animation.h"
+#include "../../libs/input.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -168,6 +169,8 @@ public:
         if (!editing_data_ptr) return;
         if (editing_data_kind == DataField::Kind::STRING) {
             *static_cast<std::string*>(editing_data_ptr) = edit_data_buffer;
+        } else if (editing_data_kind == DataField::Kind::FLOAT) {
+            try { *static_cast<float*>(editing_data_ptr) = std::stof(edit_data_buffer); } catch (...) {}
         } else {
             try { *static_cast<int*>(editing_data_ptr) = std::stoi(edit_data_buffer); } catch (...) {}
         }
@@ -312,6 +315,14 @@ public:
                     } else if (f.kind == DataField::Kind::PLAYER_NUM) {
                         if (in_rect(mouse, r.minus)) *f.pn = (PlayerNum)(((int)*f.pn + 5) % 6);
                         else if (in_rect(mouse, r.plus)) *f.pn = (PlayerNum)(((int)*f.pn + 1) % 6);
+                    } else if (f.kind == DataField::Kind::FLOAT) {
+                        if (in_rect(mouse, r.minus)) *f.fl -= step;
+                        else if (in_rect(mouse, r.plus)) *f.fl += step;
+                        else if (in_rect(mouse, r.value)) {
+                            editing_data_ptr = f.fl;
+                            editing_data_kind = f.kind;
+                            edit_data_buffer = data_field_display(f);
+                        }
                     } else { // INT
                         if (in_rect(mouse, r.minus)) *f.i -= step;
                         else if (in_rect(mouse, r.plus)) *f.i += step;
@@ -325,20 +336,18 @@ public:
             }
 
             if (editing_data_ptr) {
-                if (ray::IsKeyPressed(ray::KEY_ESCAPE)) {
+                TextEditAction action = poll_text_edit(edit_data_buffer, [&](int ch) {
+                    if (editing_data_kind == DataField::Kind::STRING)
+                        return ch >= 32 && ch < 127 && edit_data_buffer.size() < 64;
+                    return ((ch >= '0' && ch <= '9') || (ch == '-' && edit_data_buffer.empty()) ||
+                            (ch == '.' && editing_data_kind == DataField::Kind::FLOAT)) &&
+                           edit_data_buffer.size() < 64;
+                });
+                if (action == TextEditAction::Cancel) {
                     editing_data_ptr = nullptr;
                     edit_data_buffer.clear();
-                } else if (ray::IsKeyPressed(ray::KEY_ENTER)) {
+                } else if (action == TextEditAction::Confirm) {
                     commit_data_edit();
-                } else {
-                    if (ray::IsKeyPressed(ray::KEY_BACKSPACE) && !edit_data_buffer.empty()) edit_data_buffer.pop_back();
-                    int ch;
-                    while ((ch = ray::GetCharPressed()) > 0) {
-                        bool ok = (editing_data_kind == DataField::Kind::STRING)
-                            ? (ch >= 32 && ch < 127)
-                            : ((ch >= '0' && ch <= '9') || (ch == '-' && edit_data_buffer.empty()));
-                        if (ok && edit_data_buffer.size() < 64) edit_data_buffer += (char)ch;
-                    }
                 }
             }
             return;
@@ -446,19 +455,16 @@ public:
         }
 
         if (editing_field >= 0) {
-            if (ray::IsKeyPressed(ray::KEY_ESCAPE)) {
+            TextEditAction action = poll_text_edit(edit_buffer, [&](int ch) {
+                bool is_digit = ch >= '0' && ch <= '9';
+                bool is_sign  = ch == '-' && edit_buffer.empty();
+                return (is_digit || is_sign) && edit_buffer.size() < 8;
+            });
+            if (action == TextEditAction::Cancel) {
                 editing_field = -1;
                 edit_buffer.clear();
-            } else if (ray::IsKeyPressed(ray::KEY_ENTER)) {
+            } else if (action == TextEditAction::Confirm) {
                 commit_edit();
-            } else {
-                if (ray::IsKeyPressed(ray::KEY_BACKSPACE) && !edit_buffer.empty()) edit_buffer.pop_back();
-                int ch;
-                while ((ch = ray::GetCharPressed()) > 0) {
-                    bool is_digit = ch >= '0' && ch <= '9';
-                    bool is_sign  = ch == '-' && edit_buffer.empty();
-                    if ((is_digit || is_sign) && edit_buffer.size() < 8) edit_buffer += (char)ch;
-                }
             }
         }
     }
@@ -651,11 +657,12 @@ private:
 
     struct DataField {
         std::string label;
-        enum class Kind { INT, BOOL, STRING, PLAYER_NUM } kind;
+        enum class Kind { INT, BOOL, STRING, PLAYER_NUM, FLOAT } kind;
         int* i = nullptr;
         bool* b = nullptr;
         std::string* s = nullptr;
         PlayerNum* pn = nullptr;
+        float* fl = nullptr;
     };
     void* editing_data_ptr = nullptr;
     DataField::Kind editing_data_kind = DataField::Kind::INT;
@@ -700,6 +707,11 @@ private:
             case DataField::Kind::BOOL: return *f.b ? "true" : "false";
             case DataField::Kind::STRING: return *f.s;
             case DataField::Kind::PLAYER_NUM: return player_num_name(*f.pn);
+            case DataField::Kind::FLOAT: {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.2f", *f.fl);
+                return buf;
+            }
         }
         return "";
     }
@@ -732,6 +744,14 @@ private:
         f.push_back({"session.dan_index", DataField::Kind::INT, &sd.dan_index});
         f.push_back({"session.dan_index_max", DataField::Kind::INT, &sd.dan_index_max});
         f.push_back({"session.dan_gaiden", DataField::Kind::BOOL, nullptr, &sd.dan_gaiden});
+        f.push_back({"session.result.score", DataField::Kind::INT, &sd.result_data.score});
+        f.push_back({"session.result.good", DataField::Kind::INT, &sd.result_data.good});
+        f.push_back({"session.result.ok", DataField::Kind::INT, &sd.result_data.ok});
+        f.push_back({"session.result.bad", DataField::Kind::INT, &sd.result_data.bad});
+        f.push_back({"session.result.max_combo", DataField::Kind::INT, &sd.result_data.max_combo});
+        f.push_back({"session.result.total_drumroll", DataField::Kind::INT, &sd.result_data.total_drumroll});
+        f.push_back({"session.result.gauge_length", DataField::Kind::FLOAT, nullptr, nullptr, nullptr, nullptr, &sd.result_data.gauge_length});
+        f.push_back({"session.result.prev_score", DataField::Kind::INT, &sd.result_data.prev_score});
         return f;
     }
 
@@ -837,7 +857,8 @@ private:
                 int name_w = measure_text(name, 13);
                 draw_text(name, (int)(r.value.x + (r.value.width - name_w) * 0.5f), (int)r.value.y + 3, 13, ray::WHITE);
             } else { // INT
-                bool is_editing = editing_data_ptr == static_cast<void*>(f.i);
+                bool is_editing = editing_data_ptr == (f.kind == DataField::Kind::FLOAT
+                                                       ? static_cast<void*>(f.fl) : static_cast<void*>(f.i));
                 ray::DrawRectangleRec(r.minus, ray::Fade(ray::WHITE, 0.2f));
                 draw_text("-", (int)r.minus.x + 5, (int)r.minus.y, 14, ray::WHITE);
                 ray::DrawRectangleRec(r.plus, ray::Fade(ray::WHITE, 0.2f));
@@ -1148,7 +1169,7 @@ private:
             ray::Rectangle thumb_bg = {cell_x + (FRAME_CELL_WIDTH - FRAME_THUMB_SIZE) * 0.5f, row_y,
                                         FRAME_THUMB_SIZE, FRAME_THUMB_SIZE};
             ray::DrawRectangleRec(thumb_bg, ray::Fade(ray::BLACK, 0.5f));
-            const ray::Texture2D& t = framed->textures[idx];
+            const ray::Texture2D& t = *framed->textures[idx];
             ray::Rectangle src = {0, 0, (float)t.width, (float)t.height};
             ray::DrawTexturePro(t, src, thumb_bg, {0, 0}, 0, ray::WHITE);
             ray::DrawRectangleLinesEx(thumb_bg, 1.0f, ray::Fade(ray::WHITE, 0.4f));

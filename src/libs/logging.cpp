@@ -32,7 +32,7 @@
 #include "../platform/platform_android.h"
 #elif defined(__EMSCRIPTEN__)
 #include "../platform/platform_emscripten.h"
-#else
+#elif !defined(YATAIDON_PLATFORM_IOS)
 #include "../platform/platform_linux.h"
 #endif
 
@@ -70,7 +70,7 @@ static void install_crash_handlers() {
     android_install_crash_handlers();
 #elif defined(__EMSCRIPTEN__)
     emscripten_install_crash_handlers();
-#else
+#elif !defined(YATAIDON_PLATFORM_IOS)
     unix_install_crash_handlers();
 #endif
 }

@@ -80,7 +80,7 @@ export function defaultConfig(): AppConfig {
     catalogCachePath: path.join(APP_DIR, "catalog.json"),
     mergeOniUraDefault: true,
     pollMs: 1500,
-    playerId: 1,
+    playerId: "0",
   }
 }
 
@@ -88,8 +88,18 @@ export function loadConfig(): AppConfig {
   const base = defaultConfig()
   if (!fs.existsSync(USER_CONFIG_PATH)) return base
   try {
-    const raw = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")) as Partial<AppConfig>
-    return { ...base, ...raw }
+    const raw = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")) as Partial<AppConfig> & {
+      playerId?: string | number
+    }
+    const next = { ...base, ...raw }
+    // Upstream scores.db migration: integer player_id 1 → access code "0".
+    if (typeof raw.playerId === "number") {
+      next.playerId = raw.playerId === 1 ? "0" : String(raw.playerId)
+    } else if (raw.playerId === "1" && base.playerId === "0") {
+      // Old companion configs stored default as "1" before access-code remap.
+      next.playerId = "0"
+    }
+    return next
   } catch {
     return base
   }

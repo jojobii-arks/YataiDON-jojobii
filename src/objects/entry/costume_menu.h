@@ -50,7 +50,6 @@ private:
 
     void load_costume_icons(const std::string& subdir, const std::string& json_key);
 
-    bool presets_enabled = false;
     std::optional<int> preset_cos_id;
     int preset_seq = 0;
     std::vector<int> preset_pool;

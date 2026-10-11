@@ -5,10 +5,6 @@
 #   checksums-linux.sha256  sha256sum-format, relative paths from install dir
 #   update-linux.tar.gz     binary + shader + lib
 #
-# Skins with a .skin-repo file are updated by comparing against checksums.sha256
-# fetched from the skin repo's branch HEAD. No local version state is kept.
-# .skin-repo format: line 1 = repo URL, line 2 (optional) = branch (default: main)
-#
 # Usage (standalone):   ./update.sh
 # Usage (from game):    ./update.sh --wait-pid <PID>
 #
@@ -35,17 +31,6 @@ done
 
 die() { echo "[update] Error: $*" >&2; exit 1; }
 log() { echo "[update] $*"; }
-
-skin_file_url() {
-    local repo_url="$1" branch="$2" filepath="$3"
-    local base="${repo_url%.git}"
-    if [[ "$base" == *"github.com"* ]]; then
-        local path="${base#*github.com/}"
-        echo "https://media.githubusercontent.com/media/$path/$branch/$filepath"
-    else
-        echo "$base/raw/branch/$branch/$filepath"
-    fi
-}
 
 # --- Fetch release metadata ---
 log "Checking for updates..."
@@ -85,50 +70,13 @@ while read -r expected_hash rel_path; do
     break
 done < "$TMP_DIR/checksums.sha256"
 
-# --- Check installed skins ---
-# Fetch checksums.sha256 from each skin's repo and compare against local files.
-touch "$TMP_DIR/skin-updates.tsv"
-NEED_SKIN_COUNT=0
-for skin_repo_file in "$INSTALL_DIR"/Skins/*/.skin-repo; do
-    [ -f "$skin_repo_file" ] || continue
-    skin_dir=$(dirname "$skin_repo_file")
-    skin_name=$(basename "$skin_dir")
-    repo_url=$(sed -n '1p' "$skin_repo_file" | tr -d '[:space:]')
-    branch=$(sed -n '2p' "$skin_repo_file" | tr -d '[:space:]')
-    branch="${branch:-main}"
-
-    checksums_url=$(skin_file_url "$repo_url" "$branch" "checksums.sha256")
-    skin_checksums="$TMP_DIR/skin-checksums-$skin_name.sha256"
-    curl -sfL --max-time 30 -o "$skin_checksums" "$checksums_url" || {
-        log "Warning: could not fetch checksums for $skin_name — skipping"
-        continue
-    }
-
-    skin_needs_update=0
-    while read -r expected_hash rel_path; do
-        rel_path="${rel_path#\*}"
-        [[ "$(basename "$rel_path")" == "checksums.sha256" ]] && continue
-        local_file="$skin_dir/$rel_path"
-        if [ -f "$local_file" ]; then
-            actual_hash=$(sha256sum "$local_file" | awk '{print $1}')
-            [ "$actual_hash" = "$expected_hash" ] && continue
-        fi
-        skin_needs_update=1
-        break
-    done < "$skin_checksums"
-
-    [ $skin_needs_update -eq 0 ] && continue
-    printf '%s\t%s\t%s\n' "$skin_dir" "$repo_url" "$branch" >> "$TMP_DIR/skin-updates.tsv"
-    NEED_SKIN_COUNT=$((NEED_SKIN_COUNT+1))
-done
-
-if [ $NEED_PACKAGE -eq 0 ] && [ $NEED_SKIN_COUNT -eq 0 ]; then
+if [ $NEED_PACKAGE -eq 0 ]; then
     log "Already up to date."
     echo "$LATEST_TAG" > "$VERSION_FILE"
     exit 0
 fi
 
-log "Updates needed — package: $NEED_PACKAGE | skins: $NEED_SKIN_COUNT"
+log "Updates needed — package: $NEED_PACKAGE"
 
 # --- Wait for game process if requested ---
 if [ -n "$WAIT_PID" ]; then
@@ -137,46 +85,14 @@ if [ -n "$WAIT_PID" ]; then
 fi
 
 # --- Download and extract main package ---
-if [ $NEED_PACKAGE -eq 1 ]; then
-    url=$(asset_url "update-linux.tar.gz")
-    [ -z "$url" ] && die "No update-linux.tar.gz in release $LATEST_TAG"
-    log "Downloading update-linux.tar.gz..."
-    curl -fL --progress-bar -o "$TMP_DIR/update-linux.tar.gz" "$url"
-    log "Extracting..."
-    tar -xzf "$TMP_DIR/update-linux.tar.gz" -C "$INSTALL_DIR"
-    chmod +x "$INSTALL_DIR/YataiDON"
-    log "Package applied."
-fi
-
-# --- Update skins ---
-if [ $NEED_SKIN_COUNT -gt 0 ]; then
-    while IFS=$'\t' read -r skin_dir repo_url branch; do
-        skin_name=$(basename "$skin_dir")
-        log "Updating $skin_name..."
-        skin_checksums="$TMP_DIR/skin-checksums-$skin_name.sha256"
-
-        changed=0
-        while read -r expected_hash rel_path; do
-            rel_path="${rel_path#\*}"
-            [[ "$(basename "$rel_path")" == "checksums.sha256" ]] && continue
-            local_file="$skin_dir/$rel_path"
-            if [ -f "$local_file" ]; then
-                actual_hash=$(sha256sum "$local_file" | awk '{print $1}')
-                [ "$actual_hash" = "$expected_hash" ] && continue
-            fi
-            raw_url=$(skin_file_url "$repo_url" "$branch" "$rel_path")
-            mkdir -p "$(dirname "$local_file")"
-            curl -sfL -o "$local_file.tmp" "$raw_url" && mv "$local_file.tmp" "$local_file" || {
-                log "Warning: failed to download $rel_path"
-                rm -f "$local_file.tmp"
-                continue
-            }
-            changed=$((changed+1))
-        done < "$skin_checksums"
-
-        log "$skin_name: $changed file(s) updated."
-    done < "$TMP_DIR/skin-updates.tsv"
-fi
+url=$(asset_url "update-linux.tar.gz")
+[ -z "$url" ] && die "No update-linux.tar.gz in release $LATEST_TAG"
+log "Downloading update-linux.tar.gz..."
+curl -fL --progress-bar -o "$TMP_DIR/update-linux.tar.gz" "$url"
+log "Extracting..."
+tar -xzf "$TMP_DIR/update-linux.tar.gz" -C "$INSTALL_DIR"
+chmod +x "$INSTALL_DIR/YataiDON"
+log "Package applied."
 
 echo "$LATEST_TAG" > "$VERSION_FILE"
 log "Update complete ($LATEST_TAG). Restart YataiDON to apply."

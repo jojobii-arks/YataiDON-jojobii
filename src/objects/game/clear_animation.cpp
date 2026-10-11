@@ -1,119 +1,15 @@
 #include "clear_animation.h"
-#include "../../libs/audio.h"
-#include <stdexcept>
 
-namespace {
-    constexpr int CLEAR_ANIM_BACHIO_FADE_IN = 46;
-    constexpr int CLEAR_ANIM_BACHIO_TEXTURE_CHANGE = 47;
-    constexpr int CLEAR_ANIM_BACHIO_OUT = 55;
-    constexpr int CLEAR_ANIM_BACHIO_MOVE_OUT = 66;
-    constexpr int CLEAR_ANIM_HIGHLIGHT_FADE_IN = 56;
-
-    template <class T>
-    T* require_anim(int id) {
-        auto* a = dynamic_cast<T*>(tex.get_animation(id, true));
-        if (!a) throw std::runtime_error("animation " + std::to_string(id) + " has unexpected type");
-        return a;
-    }
-}
-
-ClearAnimation::ClearAnimation(bool is_2p)
-    : is_2p(is_2p), draw_clear_full(false), name("in"), frame(0) {
-
-    bachio_fade_in = require_anim<FadeAnimation>(CLEAR_ANIM_BACHIO_FADE_IN);
-    bachio_texture_change = require_anim<TextureChangeAnimation>(CLEAR_ANIM_BACHIO_TEXTURE_CHANGE);
-    bachio_out = require_anim<TextureChangeAnimation>(CLEAR_ANIM_BACHIO_OUT);
-    bachio_move_out = require_anim<MoveAnimation>(CLEAR_ANIM_BACHIO_MOVE_OUT);
-
-    bachio_fade_in->start();
-    bachio_texture_change->start();
-    bachio_out->start();
-    bachio_move_out->start();
-
-    for (int i = 0; i < 5; i++) {
-        auto fade = std::make_unique<FadeAnimation>(100, 0.0f, false, false, 1.0f, i * 50);
-        fade->start();
-        clear_separate_fade_in.push_back(std::move(fade));
-
-        auto stretch = std::make_unique<TextStretchAnimation>(200, i * 50);
-        stretch->start();
-        clear_separate_stretch.push_back(std::move(stretch));
-    }
-
-    clear_highlight_fade_in = require_anim<FadeAnimation>(CLEAR_ANIM_HIGHLIGHT_FADE_IN);
-    clear_highlight_fade_in->start();
-
-    audio.play_sound("clear", VolumePreset::SOUND);
-
-    t_clear = tex.get_texture("ending_anim/clear");
-    t_clear_separated = tex.get_texture("ending_anim/clear_separated");
-    t_clear_highlight = tex.get_texture("ending_anim/clear_highlight");
-    t_bachio_l_in = tex.get_texture("ending_anim/bachio_l_in");
-    t_bachio_l_out = tex.get_texture("ending_anim/bachio_l_out");
-    t_bachio_r_in = tex.get_texture("ending_anim/bachio_r_in");
-    t_bachio_r_out = tex.get_texture("ending_anim/bachio_r_out");
+ClearAnimation::ClearAnimation(bool is_2p) {
+    if (!load("ClearAnimation", "clear_animation", is_2p)) return;
+    fn_update = lua_object["update"];
+    fn_draw   = lua_object["draw"];
 }
 
 void ClearAnimation::update(double current_ms) {
-    bachio_fade_in->update(current_ms);
-    bachio_texture_change->update(current_ms);
-    bachio_out->update(current_ms);
-    bachio_move_out->update(current_ms);
-    clear_highlight_fade_in->update(current_ms);
-
-    if (clear_highlight_fade_in->is_finished || clear_highlight_fade_in->attribute >= 1.0) {
-        draw_clear_full = true;
-    }
-
-    for (auto& fade : clear_separate_fade_in) {
-        fade->update(current_ms);
-    }
-    for (auto& stretch : clear_separate_stretch) {
-        stretch->update(current_ms);
-    }
-
-    if (bachio_texture_change->is_finished) {
-        name = "out";
-        frame = (int)bachio_out->attribute;
-    } else {
-        frame = (int)bachio_texture_change->attribute;
-    }
+    call(fn_update, "ClearAnimation:update", current_ms);
 }
 
-void ClearAnimation::draw() const {
-    if (draw_clear_full) {
-        tex.draw_texture(t_clear, {
-            .index = (int)is_2p
-        });
-    } else {
-        for (int i = 4; i >= 0; i--) {
-            tex.draw_texture(t_clear_separated, {
-                .frame = i,
-                .x = (float)(i * tex.skin_config[SC::CLEAR_ANIMATION_X_SPACING].x),
-                .y = (float)(-clear_separate_stretch[i]->attribute),
-                .y2 = (float)(clear_separate_stretch[i]->attribute),
-                .fade = (float)(clear_separate_fade_in[i]->attribute),
-                .index = (int)is_2p
-            });
-        }
-    }
-
-    tex.draw_texture(t_clear_highlight, {
-        .fade = (float)(clear_highlight_fade_in->attribute),
-        .index = (int)is_2p
-    });
-
-    tex.draw_texture(name == "in" ? t_bachio_l_in : t_bachio_l_out, {
-        .frame = frame,
-        .x = (float)(-bachio_move_out->attribute),
-        .fade = (float)(bachio_fade_in->attribute),
-        .index = (int)is_2p
-    });
-
-    tex.draw_texture(name == "in" ? t_bachio_r_in : t_bachio_r_out, {
-        .frame = frame,
-        .x = (float)(bachio_move_out->attribute),
-        .fade = (float)(bachio_fade_in->attribute),
-        .index = (int)is_2p
-    });
+void ClearAnimation::draw() {
+    call(fn_draw, "ClearAnimation:draw");
 }

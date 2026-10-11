@@ -5,6 +5,7 @@
 #include <rlgl.h>
 
 #include "libs/animation.h"
+#include "libs/profiler.h"
 #include "libs/audio.h"
 #include "libs/dev_mode.h"
 #include "libs/global_data.h"
@@ -17,6 +18,9 @@
 #include "libs/script.h"
 #include "libs/song_parser.h"
 #include "libs/tier_list.h"
+#include "libs/skin_updater.h"
+#include "libs/text.h"
+#include "libs/webcam.h"
 
 #ifdef _WIN32
 #include "platform/platform_windows.h"
@@ -24,6 +28,12 @@
 #include "platform/platform_android.h"
 #elif defined(__EMSCRIPTEN__)
 #include "platform/platform_emscripten.h"
+#elif defined(__linux__)
+#include "platform/platform_linux.h"
+#endif
+
+#ifdef PLATFORM_ANDROID
+#include <SDL3/SDL_main.h>
 #endif
 
 #include "scenes/dan_result.h"
@@ -57,6 +67,31 @@ void draw_outer_border(int screen_width, int screen_height, ray::Color last_colo
     DrawRectangle(screen_width, 0, screen_width, screen_height, last_color);
     DrawRectangle(0, -screen_height, screen_width, screen_height, last_color);
     DrawRectangle(0, screen_height, screen_width, screen_height, last_color);
+    DrawRectangle(-screen_width, -screen_height, screen_width, screen_height, last_color);
+    DrawRectangle(screen_width, -screen_height, screen_width, screen_height, last_color);
+    DrawRectangle(-screen_width, screen_height, screen_width, screen_height, last_color);
+    DrawRectangle(screen_width, screen_height, screen_width, screen_height, last_color);
+}
+
+static void draw_skin_update_status() {
+    const SkinUpdater::Status st = skin_updater.snapshot();
+    if (!st.running) return;
+
+    const int size = static_cast<int>(20.0f * global_tex.screen_scale);
+    const float x = static_cast<float>(size);
+    float y = static_cast<float>(size) * 2.0f;
+
+    const std::string skin_line = st.current_skin.empty()
+                                      ? "Checking for skin updates..."
+                                      : "Updating skin: " + st.current_skin;
+    ray::Font skin_font = font_manager.get_font(skin_line, size);
+    ray::DrawTextEx(skin_font, skin_line.c_str(), ray::Vector2{x, y}, static_cast<float>(size), 1.0f, ray::YELLOW);
+
+    if (!st.current_file.empty()) {
+        y += static_cast<float>(size);
+        ray::Font file_font = font_manager.get_font(st.current_file, size);
+        ray::DrawTextEx(file_font, st.current_file.c_str(), ray::Vector2{x, y}, static_cast<float>(size), 1.0f, ray::WHITE);
+    }
 }
 
 [[noreturn]] static void exit_now(int code) {
@@ -103,6 +138,32 @@ static std::optional<Screens> screen_from_name(const std::string& raw) {
 // finishes loading (song select needs the navigator preloaded by then).
 static std::optional<Screens> dev_target_screen;
 static bool dev_jump_done = false;
+
+// Consumes --card-port/--card-baud/--card-poll-ms (and removes them from argv) so check_args never sees them.
+static void parse_card_reader_args(int& argc, char* argv[], CardReaderConfig& cr) {
+    int out = 1;
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        const bool known = arg == "--card-port" || arg == "--card-baud" || arg == "--card-poll-ms";
+        if (!known) { argv[out++] = argv[i]; continue; }
+        if (i + 1 >= argc) {
+            std::cerr << "Error: " << arg << " requires a value\n";
+            exit_now(1);
+        }
+        std::string val = argv[++i];
+        if (arg == "--card-port") { cr.port = val; continue; }
+        try {
+            size_t pos = 0;
+            int n = std::stoi(val, &pos);
+            if (pos != val.size() || n <= 0) throw std::invalid_argument(val);
+            (arg == "--card-baud" ? cr.baudrate : cr.poll_interval_ms) = n;
+        } catch (const std::exception&) {
+            std::cerr << "Error: Invalid value for " << arg << ": " << val << "\n";
+            exit_now(1);
+        }
+    }
+    argc = out;
+}
 
 Screens check_args(int argc, char* argv[]) {
     if (argc == 1) {
@@ -206,6 +267,10 @@ Screens check_args(int argc, char* argv[]) {
                          "(don, kat, left, right, reload; F8 also reloads the skin)\n";
             std::cout << "  --key-gap SEC : spacing between injected inputs (default 0.4)\n";
             std::cout << "  --keep-open : stay running after the shot instead of quitting\n";
+            std::cout << "Card reader (valid with or without song_path):\n";
+            std::cout << "  --card-port <path>   : Serial port (default /dev/ttyUSB0)\n";
+            std::cout << "  --card-baud <rate>   : Baud rate (default 38400)\n";
+            std::cout << "  --card-poll-ms <ms>  : Poll interval (default 100)\n";
             exit_now(0);
         } else if (!arg.empty() && arg[0] == '-') {
             std::cerr << "Error: Unknown option: " << arg << "\n";
@@ -371,7 +436,7 @@ void reload_skin_screens() {
 static void save_screenshot(const std::string& path, Screens current_screen) {
     if (path.empty()) return;
     ray::Image image = ray::LoadImageFromScreen();
-    if (current_screen == Screens::RESULT) {
+    if (current_screen == Screens::RESULT && tex.options[SCO::CROP_RESULT_SCREENSHOT]) {
         ray::ImageCrop(&image, {0, 0, (float)image.width, (float)image.height / 2.0f});
     }
     std::error_code ec;
@@ -405,6 +470,8 @@ static void dev_reload_skin() {
 }
 
 static void run_frame() {
+    PROFILE_FRAME();
+    PROFILE_SCOPE();
     LoopState& L = *g_loop;
 
     g_frame_ms = get_current_ms();
@@ -412,7 +479,9 @@ static void run_frame() {
     ray::PollInputEvents();
 #if defined(YATAIDON_PLATFORM_IOS)
     if (ios_is_suspended_state()) return;
-    poll_keyboard_once();
+#endif
+#if defined(YATAIDON_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
+    poll_keyboard_once();  // no input thread on these platforms
 #endif
     poll_touch_once();
 
@@ -422,6 +491,7 @@ static void run_frame() {
     } else if (g_dev.enabled && check_key_pressed(ray::KEY_F8)) {
         dev_reload_skin();
     }
+    apply_queued_window_resize();
 
     if (check_key_pressed(global_data.config->keys.fullscreen_key)) {
         ray::ToggleFullscreen();
@@ -429,6 +499,14 @@ static void run_frame() {
     } else if (check_key_pressed(global_data.config->keys.borderless_key)) {
         ray::ToggleBorderlessWindowed();
         spdlog::info("Toggled borderless windowed mode");
+    }
+
+    {   // new sol metatables (see ScriptManager::refresh_method_cache)
+        static double last_method_cache_ms = 0.0;
+        if (g_frame_ms - last_method_cache_ms > 1000.0) {
+            last_method_cache_ms = g_frame_ms;
+            script_manager.refresh_method_cache();
+        }
     }
 
     L.camera = compute_camera2d(tex.screen_width, tex.screen_height);
@@ -480,7 +558,13 @@ static void run_frame() {
     }
 
     network.update(g_frame_ms);
-    std::optional<Screens> next_screen = screen->update();
+    std::optional<Screens> next_screen;
+    {
+        PROFILE_SCOPE_N("screen update");
+        PROFILE_ZONE_TEXT(screen->screen_name);
+        next_screen = screen->update();
+    }
+    sync_text_input();
 
     if (!next_screen.has_value() && debug_menu.requested_screen.has_value()) {
         next_screen = screen->on_screen_end(debug_menu.requested_screen.value());
@@ -496,6 +580,8 @@ static void run_frame() {
     }
 
     if (screen->screen_init) {
+        PROFILE_SCOPE_N("screen draw");
+        PROFILE_ZONE_TEXT(screen->screen_name);
         screen->_do_draw();
     }
     if (L.screen_fade_start > 0.0) {
@@ -530,6 +616,8 @@ static void run_frame() {
         L.fps_counter.draw();
     }
 
+    draw_skin_update_status();
+
     debug_menu.draw();
     hidden_helper.draw();
 
@@ -537,10 +625,13 @@ static void run_frame() {
 
     ray::EndBlendMode();
     ray::EndMode2D();
-    ray::EndDrawing();
+    {
+        PROFILE_SCOPE_N("present");
+        ray::EndDrawing();
 
-    if (!next_screen.has_value()) {
-        ray::SwapScreenBuffer();
+        if (!next_screen.has_value()) {
+            ray::SwapScreenBuffer();
+        }
     }
 
     if (ray::IsKeyPressed(ray::KEY_F12)) {
@@ -609,6 +700,11 @@ static void run_frame() {
         }
         auto spin_start = L.next_frame_time - std::chrono::microseconds(500);
         if (spin_start > now) {
+#ifdef _WIN32
+            // the plain sleep overshoots by up to a 15.6 ms tick, which turned every other frame
+            // into a ~17 ms one (frames came as ~1 ms / ~17 ms pairs at any target)
+            if (!win32_precise_sleep_us(std::chrono::duration_cast<std::chrono::microseconds>(spin_start - now).count()))
+#endif
             std::this_thread::sleep_until(spin_start);
         }
         while (std::chrono::steady_clock::now() < L.next_frame_time) { }
@@ -620,6 +716,10 @@ int main(int argc, char* argv[]) {
     spdlog::info("Starting YataiDON");
     set_working_directory_to_executable();
     global_data.config = new Config(get_config());
+    // Save config after loading in case migration occurred (old fields -> new fields)
+    save_config(*global_data.config);
+    ensure_config_file(*global_data.config);
+    parse_card_reader_args(argc, argv, global_data.config->card_reader);
     Screens initial_screen = check_args(argc, argv);
     if (initial_screen == Screens::LOADING && !g_dev.screen.empty()) {
         dev_target_screen = screen_from_name(g_dev.screen);
@@ -650,6 +750,7 @@ int main(int argc, char* argv[]) {
 
     ray::InitWindow(1280, 720, "YataiDON");
     load_skin();
+    apply_queued_window_resize();
 
     if (!g_dev.window_pos.empty()) {
         try {
@@ -664,8 +765,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    scores_manager.player_1 = global_data.config->general.player_1_id;
-    scores_manager.player_2 = global_data.config->general.player_2_id;
+    // Apply config defaults for empty access codes
+    if (global_data.config->network.access_code_1.empty()) {
+        global_data.config->network.access_code_1 = "0";
+    }
+    if (global_data.config->network.access_code_2.empty()) {
+        global_data.config->network.access_code_2 = "1";
+    }
+
+    scores_manager.player_1 = global_data.config->network.access_code_1;
+    scores_manager.player_2 = global_data.config->network.access_code_2;
     if (auto pd = scores_manager.get_player_data(scores_manager.player_1))
         scores_manager.player_1_data = *pd;
     if (auto pd = scores_manager.get_player_data(scores_manager.player_2))
@@ -673,79 +782,12 @@ int main(int argc, char* argv[]) {
 
 #ifdef PLATFORM_ANDROID
     android_check_and_install_update();
-    android_check_skin_updates();
 #endif
+    if (global_data.config->general.skin_updater) skin_updater.start();
 
 #ifdef YATAIDON_PLATFORM_IOS
     ios_initialize_after_window();
 #endif
-
-    const bool net_ok = !g_dev.offline && network.probe_online();
-    if (net_ok && global_data.config->network.access_code.empty()) {
-        std::string access_code = network.register_user(scores_manager.player_1_data.username);
-        if (!access_code.empty()) {
-            global_data.config->network.access_code = access_code;
-            save_config(*global_data.config);
-        }
-    }
-
-    if (net_ok && !global_data.config->network.access_code.empty() &&
-        network.check_import_requested(global_data.config->network.access_code)) {
-        spdlog::info("hiroba requested a score import, exporting scores.db");
-        scores_manager.export_to_hiroba(global_data.config->network.access_code, scores_manager.player_1);
-        network.clear_import_flag(global_data.config->network.access_code);
-    }
-
-    if (net_ok && !global_data.config->network.access_code.empty()) {
-        ray::Color chara_color_1, chara_color_2, chara_color_3;
-        if (network.fetch_chara_colors(global_data.config->network.access_code, chara_color_1, chara_color_2, chara_color_3)) {
-            scores_manager.player_1_data.chara_color_1 = chara_color_1;
-            scores_manager.player_1_data.chara_color_2 = chara_color_2;
-            scores_manager.player_1_data.chara_color_3 = chara_color_3;
-            scores_manager.save_player_data(scores_manager.player_1_data);
-        }
-
-        std::string server_username;
-        if (network.fetch_username(global_data.config->network.access_code, server_username) &&
-            !server_username.empty() && server_username != scores_manager.player_1_data.username) {
-            scores_manager.player_1_data.username = server_username;
-            scores_manager.save_player_data(scores_manager.player_1_data);
-        }
-
-        std::string server_title;
-        if (network.fetch_title(global_data.config->network.access_code, server_title) &&
-            !server_title.empty() && server_title != scores_manager.player_1_data.title) {
-            scores_manager.player_1_data.title = server_title;
-            scores_manager.save_player_data(scores_manager.player_1_data);
-        }
-
-        int server_title_bg;
-        if (network.fetch_title_bg(global_data.config->network.access_code, server_title_bg) &&
-            server_title_bg != scores_manager.player_1_data.title_bg) {
-            scores_manager.player_1_data.title_bg = server_title_bg;
-            scores_manager.save_player_data(scores_manager.player_1_data);
-        }
-
-        int head_index = scores_manager.player_1_data.chara_head_index;
-        int body_index = scores_manager.player_1_data.chara_body_index;
-        int cos_index = scores_manager.player_1_data.chara_cos_index;
-        bool is_costume = scores_manager.player_1_data.chara_is_costume;
-        if (network.fetch_costume(global_data.config->network.access_code, head_index, body_index, cos_index, is_costume) &&
-            (head_index != scores_manager.player_1_data.chara_head_index ||
-             body_index != scores_manager.player_1_data.chara_body_index ||
-             cos_index != scores_manager.player_1_data.chara_cos_index ||
-             is_costume != scores_manager.player_1_data.chara_is_costume)) {
-            scores_manager.player_1_data.chara_head_index = head_index;
-            scores_manager.player_1_data.chara_body_index = body_index;
-            scores_manager.player_1_data.chara_cos_index = cos_index;
-            scores_manager.player_1_data.chara_is_costume = is_costume;
-            scores_manager.save_player_data(scores_manager.player_1_data);
-        }
-
-        if (global_data.config->network.sync_scores) {
-            scores_manager.sync_from_server(global_data.config->network.access_code);
-        }
-    }
 
     double target_fps = global_data.config->video.target_fps;
     if (target_fps != -1) {
@@ -781,15 +823,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     rlSetBlendFactorsSeparate(RL_SRC_ALPHA, RL_ONE_MINUS_SRC_ALPHA, RL_ONE, RL_ONE_MINUS_SRC_ALPHA, RL_FUNC_ADD, RL_FUNC_ADD);
-#if defined(PLATFORM_ANDROID) || defined(YATAIDON_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
     ray::SetExitKey(ray::KEY_NULL);
-#else
-    ray::SetExitKey(global_data.config->keys.exit_key);
-#endif
-#ifdef ShowCursor
-#undef ShowCursor
-#endif
-    ray::ShowCursor();
+    ray::HideCursor();
 
     L.next_frame_time = std::chrono::steady_clock::now();
 #ifdef __EMSCRIPTEN__
@@ -798,26 +833,39 @@ int main(int argc, char* argv[]) {
     return ios_run_main_loop(run_frame);
 #else
     input_thread = std::thread(input_polling_thread);
+    start_midi_input(global_data.config->midi);
 
-    while (!ray::WindowShouldClose() && !check_key_pressed(global_data.config->keys.exit_key) &&
-           !g_dev.quit) {
+    while (!ray::WindowShouldClose() && !g_dev.quit) {
+        process_midi_events();
+
+        // Consume buffered quit-key presses while editing to prevent a delayed game exit after the field closes.
+        if (check_key_pressed(global_data.config->keys.exit_key) &&
+            !is_text_input_key(global_data.config->keys.exit_key)) {
+            break;
+        }
         run_frame();
     }
 
+    shutdown_midi_input();
     input_thread_running = false;
     if (input_thread.joinable()) {
         input_thread.join();
     }
     network.shutdown();
+    skin_updater.shutdown();
     shutdown_sdl_joysticks();
     delete g_loop;
+    g_loop = nullptr;
+    // Cleanup needs a live SDL/OpenGL context and config.
+    webcam.close();
+    unload_skin();
     delete global_data.config;
     global_data.config = nullptr;
-    global_tex.unload_textures();
-    tex.unload_textures();
-    script_manager.shutdown();
+#if defined(__linux__) && !defined(__ANDROID__)
+    unix_close_window();
+#else
     ray::CloseWindow();
-    audio.close_audio_device();
+#endif
     spdlog::info("Game closed");
 #endif
 }

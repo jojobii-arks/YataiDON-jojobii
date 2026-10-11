@@ -10,6 +10,8 @@ private:
     TextureChangeAnimation* fire_change = nullptr;
     float fire_fade;
     TextureObject* t_fire = nullptr;
+    TextureResizeAnimation* lane_resize = nullptr;
+    TextureObject* t_lane_effect = nullptr;
 
 public:
     GogoTime();

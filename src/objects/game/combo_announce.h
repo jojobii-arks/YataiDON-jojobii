@@ -18,7 +18,6 @@ private:
     TextureObject* t_announce_add = nullptr;
 
     sol::protected_function fn_draw;
-    void draw_default(float y, float fade_value);
 
 public:
     bool is_finished;

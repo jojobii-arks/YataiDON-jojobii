@@ -26,7 +26,7 @@ export function openScoresDb(dbPath: string): Database.Database {
 /** Exclusive best play per (hash, difficulty) — crown DESC, score DESC. */
 export function loadBestScores(
   db: Database.Database,
-  playerId: number,
+  playerId: string,
 ): Map<string, BestScore> {
   const rows = db
     .prepare(

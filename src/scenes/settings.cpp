@@ -20,8 +20,11 @@ void SettingsScreen::on_screen_start() {
 
     fs::path skin_dir = fs::path("Skins") / global_data.config->paths.skin / "Graphics";
     fs::path tmpl_path = skin_dir / "settings_template.json";
-    if (!fs::exists(tmpl_path) && tex.has_parent_skin())
-        tmpl_path = tex.parent_root() / "Graphics" / "settings_template.json";
+    if (!fs::exists(tmpl_path)) {
+        for (const fs::path& root : tex.all_graphics_roots()) {
+            if (fs::exists(root / "settings_template.json")) { tmpl_path = root / "settings_template.json"; break; }
+        }
+    }
 
     try {
         box_manager = std::make_unique<SettingsBoxManager>(read_json_file(tmpl_path));
@@ -48,9 +51,11 @@ Screens SettingsScreen::on_screen_end(Screens next_screen) {
     scores_manager.save_player_data(scores_manager.player_2_data);
     spdlog::info("Settings saved");
 
-    const std::string& access_code = global_data.config->network.access_code;
-    if (!access_code.empty() && scores_manager.player_1_data.username != username_on_entry) {
-        network.update_username(access_code, scores_manager.player_1_data.username);
+    if (!global_data.config->network.access_code_1.empty() && scores_manager.player_1_data.username != username_on_entry) {
+        network.update_username(global_data.config->network.access_code_1, scores_manager.player_1_data.username);
+    }
+    if (!global_data.config->network.access_code_2.empty() && scores_manager.player_2_data.username != username_on_entry) {
+        network.update_username(global_data.config->network.access_code_2, scores_manager.player_2_data.username);
     }
     username_on_entry.clear();
 

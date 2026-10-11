@@ -80,9 +80,16 @@ struct TextureObject {
     std::vector<int> x2;
     std::vector<int> y2;
     std::optional<std::vector<ray::Rectangle>> crop_data;
+
+    float opaque_right = 0.0f;
     TextureObject(const std::string& name, int width, int height)
         : name(name), width(width), height(height), x{0}, y{0}, x2{width}, y2{height} {}
     virtual ~TextureObject() = default;
+
+    float scissor_right() const {
+        if (opaque_right > 0.0f) return opaque_right;
+        return x2.empty() ? 0.0f : static_cast<float>(x2[0]);
+    }
 
     virtual const ray::Texture2D* frame_texture(int frame) const { return nullptr; }
 
@@ -90,34 +97,24 @@ struct TextureObject {
 };
 
 struct SingleTexture : public TextureObject {
-    ray::Texture2D texture;
+    std::shared_ptr<ray::Texture2D> texture;
 
-    SingleTexture(const std::string& name, const ray::Texture2D& tex)
-        : TextureObject(name, tex.width, tex.height), texture(tex) {
-        SetTextureWrap(texture, ray::TEXTURE_WRAP_CLAMP);
+    SingleTexture(const std::string& name, std::shared_ptr<ray::Texture2D> tex)
+        : TextureObject(name, tex->width, tex->height), texture(std::move(tex)) {
+        SetTextureWrap(*texture, ray::TEXTURE_WRAP_CLAMP);
     }
 
-    ~SingleTexture() override {
-        UnloadTexture(texture);
-    }
-
-    const ray::Texture2D* frame_texture(int) const override { return &texture; }
+    const ray::Texture2D* frame_texture(int) const override { return texture.get(); }
 };
 
 struct FramedTexture : public TextureObject {
-    std::vector<ray::Texture2D> textures;
+    std::vector<std::shared_ptr<ray::Texture2D>> textures;
 
-    FramedTexture(const std::string& name, const std::vector<ray::Texture2D>& texs)
-        : TextureObject(name, texs.empty() ? 0 : texs[0].width,
-                       texs.empty() ? 0 : texs[0].height), textures(texs) {
+    FramedTexture(const std::string& name, std::vector<std::shared_ptr<ray::Texture2D>> texs)
+        : TextureObject(name, texs.empty() ? 0 : texs[0]->width,
+                       texs.empty() ? 0 : texs[0]->height), textures(std::move(texs)) {
         for (auto& tex : textures) {
-            SetTextureWrap(tex, ray::TEXTURE_WRAP_CLAMP);
-        }
-    }
-
-    ~FramedTexture() override {
-        for (auto& tex : textures) {
-            UnloadTexture(tex);
+            SetTextureWrap(*tex, ray::TEXTURE_WRAP_CLAMP);
         }
     }
 
@@ -128,7 +125,7 @@ struct FramedTexture : public TextureObject {
             throw std::runtime_error("Frame " + std::to_string(frame) +
                 " not available in framed texture " + name);
         }
-        return &textures[frame];
+        return textures[frame].get();
     }
 };
 
@@ -161,10 +158,20 @@ private:
     std::unordered_map<std::string, std::unordered_map<int, std::unique_ptr<BaseAnimation>>> screen_animations;
     fs::path graphics_path;
     fs::path parent_graphics_path;
+    std::vector<fs::path> ancestor_graphics_paths;
+    std::vector<float> ancestor_scales;
     std::unordered_set<std::string> loaded_subsets;
+    std::unordered_map<std::string, int> tex_id_refcount;
+    std::unordered_map<std::string, std::unordered_set<std::string>> subset_loaded_ids;
+
+    bool read_screen_animations(const std::string& screen_name, rapidjson::Document& out);
 
 public:
     std::unordered_map<std::string, std::shared_ptr<TextureObject>> textures;
+    // Lua tex.get_texture(path) results by the exact path string (nullptr = not found): skins call
+    // it every frame. Emptied whenever `textures` changes, and when the language changes.
+    std::unordered_map<std::string, std::shared_ptr<TextureObject>> lua_texture_lookup;
+    std::string lua_texture_lookup_lang;
     std::unordered_map<SC, SkinInfo> skin_config;
     std::unordered_map<std::string, SkinInfo> skin_config_by_name;
     std::unordered_map<SCO, bool> options;
@@ -194,13 +201,15 @@ public:
         return t == it->second.text.end() ? fallback : t->second;
     }
 
-    ~TextureWrapper() {
-        unload_textures();
-    }
-
     fs::path skin_root()   const { return graphics_path.parent_path(); }
     fs::path parent_root() const { return parent_graphics_path.parent_path(); }
     bool has_parent_skin() const { return parent_graphics_path != graphics_path; }
+    // Graphics dirs of the skin and all its ancestors, nearest first
+    std::vector<fs::path> all_graphics_roots() const {
+        std::vector<fs::path> r{graphics_path};
+        r.insert(r.end(), ancestor_graphics_paths.begin(), ancestor_graphics_paths.end());
+        return r;
+    }
 
     fs::path resolve_skin_path(const fs::path& relative_path) const {
         if (relative_path.is_absolute()) return {};
@@ -208,9 +217,9 @@ public:
             if (part == "..") return {};
         fs::path child = skin_root() / relative_path;
         if (fs::exists(child)) return child;
-        if (has_parent_skin()) {
-            fs::path parent = parent_root() / relative_path;
-            if (fs::exists(parent)) return parent;
+        for (const fs::path& ancestor : ancestor_graphics_paths) {
+            fs::path p = ancestor.parent_path() / relative_path;
+            if (fs::exists(p)) return p;
         }
         return child;
     }
@@ -236,6 +245,8 @@ public:
     void clear_screen(const ray::Color& color);
 
     TextureObject* get_texture(const std::string& name);
+
+    std::shared_ptr<TextureObject> get_texture_shared(const std::string& name);
     std::vector<std::string> language_variants(const std::string& name) const;
 
     bool has_texture(const std::string& name);

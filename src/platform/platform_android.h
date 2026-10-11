@@ -5,9 +5,6 @@
 
 #include <filesystem>
 #include <string>
-#include <memory>
-#include <atomic>
-#include <thread>
 
 // Android-specific platform services.
 
@@ -18,32 +15,10 @@ std::filesystem::path android_get_working_directory();
 // Initializes Android-specific crash handlers.
 void android_install_crash_handlers();
 
-// Android keyboard visibility control.
-void android_set_keyboard_visible(bool visible);
-
 // Android-specific network services.
 
 // Checks for app updates and installs them if available.
 // Runs asynchronously.
 void android_check_and_install_update();
-
-// Checks for skin updates from configured repositories.
-// Runs asynchronously on a background thread.
-void android_check_skin_updates();
-
-// Returns true if a skin update check is currently in progress.
-bool android_is_skin_update_in_progress();
-
-// Android TLS/SSL configuration.
-// Returns SSL options configured for Android's CA store.
-struct AndroidSSLOptions {
-    // cpr::SslOptions object configured for Android
-    void* options;  // Opaque pointer to cpr::SslOptions
-};
-
-AndroidSSLOptions android_get_ssl_options();
-
-// Clean up any Android-specific resources.
-void android_cleanup();
 
 #endif // YATAIDON_PLATFORM_ANDROID_H

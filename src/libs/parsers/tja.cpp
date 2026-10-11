@@ -1,4 +1,5 @@
 #include "tja.h"
+#include "../profiler.h"
 #include "../md5.h"
 #include <algorithm>
 #include <cctype>
@@ -6,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <random>
 #include <sstream>
@@ -87,16 +89,45 @@ inline std::filesystem::path get_proper_path(const std::string& path, const std:
     #ifdef _WIN32
     return win32_path_from_encoded(path, encoding, base_path);
     #else
-    return path;
+    return base_path / path;
     #endif
+}
+
+// One open per chart. test_encodings + read_file_lines opened the file twice, and on Windows the
+// open is most of the cost of reading a chart's metadata. Same result as those two: the encoding
+// from the BOM, lines split like std::getline on '\n' (a UTF-8 BOM is skipped).
+static std::vector<std::string> read_lines_once(const std::filesystem::path& path, std::string& encoding) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        encoding = "";
+        throw std::runtime_error("Could not open file: " + path.string());
+    }
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::string raw(size > 0 ? static_cast<size_t>(size) : 0, '\0');
+    if (!raw.empty()) file.read(raw.data(), static_cast<std::streamsize>(raw.size()));
+    raw.resize(static_cast<size_t>(file.gcount() > 0 ? file.gcount() : 0));
+
+    const auto byte = [&](size_t i) { return i < raw.size() ? static_cast<unsigned char>(raw[i]) : 0u; };
+    if (byte(0) == 0xEF && byte(1) == 0xBB && byte(2) == 0xBF) encoding = "utf-8-sig";
+    else if (byte(0) == 0xFF && byte(1) == 0xFE) encoding = "utf-16-le";
+    else if (byte(0) == 0xFE && byte(1) == 0xFF) encoding = "utf-16-be";
+    else encoding = "shift-jis";
+
+    std::vector<std::string> lines;
+    size_t start = (encoding == "utf-8-sig") ? 3 : 0;
+    for (size_t nl; (nl = raw.find('\n', start)) != std::string::npos; start = nl + 1)
+        lines.emplace_back(raw, start, nl - start);
+    if (start < raw.size()) lines.emplace_back(raw, start, raw.size() - start);
+    return lines;
 }
 
 TJAParser::TJAParser(const std::filesystem::path& path, int start_delay, int player_num)
     : file_path(path), start_ms(static_cast<double>(start_delay)), current_ms(static_cast<double>(start_delay)), player_num(player_num) {
+    PROFILE_SCOPE();
 
-    encoding = test_encodings(file_path);
-
-    std::vector<std::string> lines = read_file_lines(file_path, encoding);
+    std::vector<std::string> lines = read_lines_once(file_path, encoding);
 
     for (const auto& line : lines) {
         std::string cleaned;
@@ -388,6 +419,7 @@ void TJAParser::get_metadata() {
 
 std::tuple<NoteList, std::deque<NoteList>, std::deque<NoteList>, std::deque<NoteList>>
 TJAParser::notes_to_position(int diff) {
+    PROFILE_SCOPE();
     if (metadata.course_data.count(diff) == 0) {
         return std::make_tuple(NoteList(), std::deque<NoteList>(), std::deque<NoteList>(), std::deque<NoteList>());
     }
@@ -409,10 +441,11 @@ TJAParser::notes_to_position(int diff) {
 
     ParserState state;
     state.bpm = metadata.bpm;
-    state.bpmchange_last_bpm = metadata.bpm;
     state.balloons = metadata.course_data[diff].balloon;
     state.curr_note_list = &master_notes.notes;
     state.curr_timeline = &master_notes.timeline;
+    master_notes.tempo_map.points = {{current_ms, 0.0, metadata.bpm}};
+    master_notes.tempo_map.lead_bpm = metadata.bpm;
 
     // Process each bar
     for (const auto& bar : notes) {
@@ -439,11 +472,6 @@ TJAParser::notes_to_position(int diff) {
                 }
                 continue;
             }
-            // Skip unrecognized non-digit lines
-            else if (!part.empty() && !std::isdigit(static_cast<unsigned char>(part[0]))) {
-                spdlog::warn("Unrecognized token '{}' in {}", part, file_path.string());
-                continue;
-            }
 
             // Add barline
             double ms_per_measure = get_ms_per_measure(state.bpm, state.time_signature);
@@ -467,7 +495,7 @@ TJAParser::notes_to_position(int diff) {
             for (char item : part) {
                 // Skip empty notes (0) and non-digits
                 if (item == '0' || !std::isdigit(static_cast<unsigned char>(item))) {
-                    state.delay_last_note_ms = current_ms;
+                    if (item != '0') spdlog::warn("Unrecognized note '{}' in {}", item, file_path.string());
                     current_ms += increment;
                     continue;
                 }
@@ -476,19 +504,9 @@ TJAParser::notes_to_position(int diff) {
                 if (item == '9' && !state.curr_note_list->empty()) {
                     Note* last_note = &state.curr_note_list->back();
                     if (last_note && last_note->type == NoteType::KUSUDAMA) {
-                        state.delay_last_note_ms = current_ms;
                         current_ms += increment;
                         continue;
                     }
-                }
-
-                // Apply delay if present
-                if (state.delay_current != 0.0f) {
-                    TimelineObject delay_timeline;
-                    delay_timeline.start_time = state.delay_last_note_ms;
-                    delay_timeline.delay = state.delay_current;
-                    state.curr_timeline->push_back(delay_timeline);
-                    state.delay_current = 0.0f;
                 }
 
                 // Create and add note
@@ -499,6 +517,7 @@ TJAParser::notes_to_position(int diff) {
             }
         }
     }
+    master_notes.scroll_type = state.scroll_type;
     return {master_notes, branch_m, branch_e, branch_n};
 }
 
@@ -625,16 +644,18 @@ std::vector<std::vector<std::string>> TJAParser::data_to_notes(int diff) {
                     note_end = i;
                     break;
                 }
+                // Like Taiko-san Jiro, the scroll mode only counts before #START
+                bool started = note_start != -1 || p1_start != -1 || p2_start != -1;
                 if (line.find("#NMSCROLL") != std::string::npos) {
-                    scroll_type = ScrollType::NMSCROLL;
+                    if (!started) scroll_type = ScrollType::NMSCROLL;
                     continue;
                 }
                 else if (line.find("#BMSCROLL") != std::string::npos) {
-                    scroll_type = ScrollType::BMSCROLL;
+                    if (!started) scroll_type = ScrollType::BMSCROLL;
                     continue;
                 }
                 else if (line.find("#HBSCROLL") != std::string::npos) {
-                    scroll_type = ScrollType::HBSCROLL;
+                    if (!started) scroll_type = ScrollType::HBSCROLL;
                     continue;
                 }
             }
@@ -686,6 +707,8 @@ std::vector<std::vector<std::string>> TJAParser::data_to_notes(int diff) {
             const std::string& line = data[i];
 
             if (line[0] == '#') {
+                if (line.starts_with("#NMSCROLL") || line.starts_with("#BMSCROLL") || line.starts_with("#HBSCROLL"))
+                    continue;
                 bar.push_back(line);
             }
             else if (line == ",") {
@@ -745,10 +768,82 @@ std::map<std::string, TJAParser::CommandHandler> TJAParser::build_command_regist
         REGISTER_HANDLER(JPOSSCROLL)
         REGISTER_HANDLER(LYRIC)
 
+        register_extended_commands(registry);
         return registry;
 }
 
 #undef REGISTER_HANDLER
+
+// TJAPlayer3-Extended commands
+void TJAParser::register_extended_commands(std::map<std::string, CommandHandler>& registry) {
+    auto split = [](const std::string& v) {
+        std::vector<std::string> out;
+        std::istringstream iss(v);
+        std::string tok;
+        while (std::getline(iss, tok, ',')) out.push_back(trim(tok));
+        return out;
+    };
+    auto push = [this](ParserState& s, CameraEvent ev) -> TimelineObject* {
+        TimelineObject t = TimelineObject();
+        t.start_time = t.end_time = this->current_ms;
+        t.cam = ev;
+        s.curr_timeline->push_back(t);
+        return &s.curr_timeline->back();  // deque: stays valid across later push_back
+    };
+    auto num = [this](const std::string& cmd, const std::vector<std::string>& a, size_t n,
+                      std::vector<double>& out) {
+        if (a.size() < n) { spdlog::warn("Malformed {} in {}", cmd, file_path.string()); return false; }
+        try { for (size_t i = 0; i < n; i++) out.push_back(std::stod(a[i])); }
+        catch (const std::exception&) { spdlog::warn("Invalid {} values in {}", cmd, file_path.string()); return false; }
+        return true;
+    };
+
+    struct Prop { const char* name; CamProp prop; };
+    for (auto [name, prop] : {Prop{"HOFFSET", CamProp::H_OFFSET}, {"VOFFSET", CamProp::V_OFFSET},
+                              {"ZOOM", CamProp::ZOOM}, {"ROTATION", CamProp::ROTATION},
+                              {"HSCALE", CamProp::H_SCALE}, {"VSCALE", CamProp::V_SCALE}}) {
+        std::string cmd = std::string("#CAM") + name;
+        registry[cmd] = [=](const std::string& v, ParserState& s) {
+            std::vector<double> d;
+            if (!num(cmd, split(v), 1, d)) return;
+            CameraEvent ev; ev.prop = prop; ev.to = d[0];
+            push(s, ev);
+        };
+        // HOFFSET/VOFFSET have no eased form upstream; they are #CAMHMOVE/#CAMVMOVE
+        std::string base = prop == CamProp::H_OFFSET ? "#CAMHMOVE" : prop == CamProp::V_OFFSET ? "#CAMVMOVE" : cmd;
+        registry[base + "START"] = [=](const std::string& v, ParserState& s) {
+            auto a = split(v);
+            std::vector<double> d;
+            if (!num(base + "START", a, 2, d)) return;
+            static const std::map<std::string, EaseDir> dirs = {{"IN", EaseDir::IN_}, {"OUT", EaseDir::OUT_}, {"IN_OUT", EaseDir::IN_OUT}};
+            static const std::map<std::string, EaseCalc> calcs = {{"CUBIC", EaseCalc::CUBIC}, {"QUARTIC", EaseCalc::QUARTIC},
+                {"QUINTIC", EaseCalc::QUINTIC}, {"SINUSOIDAL", EaseCalc::SINUSOIDAL}, {"EXPONENTIAL", EaseCalc::EXPONENTIAL},
+                {"CIRCULAR", EaseCalc::CIRCULAR}, {"LINEAR", EaseCalc::LINEAR}};
+            CameraEvent ev; ev.prop = prop; ev.from = d[0]; ev.to = d[1]; ev.ease = true;
+            if (a.size() > 2 && dirs.count(a[2])) ev.dir = dirs.at(a[2]);
+            if (a.size() > 3 && calcs.count(a[3])) ev.calc = calcs.at(a[3]);
+            s.open_cam[prop] = push(s, ev);
+        };
+        registry[base + "END"] = [=](const std::string&, ParserState& s) {
+            auto it = s.open_cam.find(prop);
+            if (it == s.open_cam.end()) return;
+            it->second->end_time = this->current_ms;
+            s.open_cam.erase(it);
+        };
+    }
+    registry["#CAMRESET"] = [=](const std::string&, ParserState& s) {
+        CameraEvent ev; ev.prop = CamProp::RESET;
+        push(s, ev);
+    };
+    registry["#BORDERCOLOR"] = [=](const std::string& v, ParserState& s) {
+        std::vector<double> d;
+        if (!num("#BORDERCOLOR", split(v), 3, d)) return;
+        CameraEvent ev; ev.prop = CamProp::BORDER_COLOR; ev.from = d[0]; ev.to = d[1]; ev.extra = d[2];
+        push(s, ev);
+    };
+    registry["#ENABLEDORON"] = [](const std::string&, ParserState& s) { s.doron = true; };
+    registry["#DISABLEDORON"] = [](const std::string&, ParserState& s) { s.doron = false; };
+}
 
 void TJAParser::handle_MEASURE(const std::string& value, ParserState& state) {
     size_t slash_pos = value.find('/');
@@ -756,7 +851,11 @@ void TJAParser::handle_MEASURE(const std::string& value, ParserState& state) {
         try {
             double num = std::stof(value.substr(0, slash_pos));
             double den = std::stof(value.substr(slash_pos + 1));
-            if (num > 0.0f && den != 0.0f) {
+            // #BMSCROLL / #HBSCROLL charts pair a negative measure with a negative BPM (time
+            // still moves forward while the beat count runs back), or use a zero-length measure
+            // and space its notes with #DELAY
+            bool beat_scroll = state.scroll_type != ScrollType::NMSCROLL;
+            if (den != 0.0f && (num > 0.0f || beat_scroll)) {
                 state.time_signature = num / den;
             } else {
                 spdlog::warn("Ignoring degenerate #MEASURE {} in {}", value, file_path.string());
@@ -783,6 +882,27 @@ void TJAParser::handle_SCROLL(const std::string& value, ParserState& state) {
 
     if (value.empty()) {
         spdlog::warn("Empty #SCROLL value in {}", file_path.string());
+        return;
+    }
+
+    // Polar form (TaikoManyGimmicks): #SCROLL <speed>, <rotation-lower>, <rotation-upper>, the
+    // speed rotated rotation-upper/rotation-lower turns counterclockwise
+    if (value.find(',') != std::string::npos && value.find('i') == std::string::npos) {
+        std::vector<double> parts;
+        std::stringstream ss(value);
+        std::string part;
+        try {
+            while (std::getline(ss, part, ',')) parts.push_back(std::stod(trim(part)));
+        } catch (const std::exception&) {
+            parts.clear();
+        }
+        if (parts.size() != 3 || parts[1] == 0.0) {
+            spdlog::warn("Invalid polar #SCROLL value '{}' in {}", value, file_path.string());
+            return;
+        }
+        double angle = 2.0 * std::numbers::pi * parts[2] / parts[1];
+        state.scroll_x_modifier = parts[0] * std::cos(angle);
+        state.scroll_y_modifier = parts[0] * std::sin(angle);
         return;
     }
 
@@ -840,23 +960,24 @@ void TJAParser::handle_BPMCHANGE(const std::string& value, ParserState& state) {
         return;
     }
 
-    if (state.scroll_type == ScrollType::BMSCROLL ||
-        state.scroll_type == ScrollType::HBSCROLL) {
-        // Do not modify bpm, it needs to be changed live by bpmchange
-        double bpmchange = parsed_bpm / state.bpmchange_last_bpm;
-        state.bpmchange_last_bpm = parsed_bpm;
+    TimelineObject timeline_obj;
+    timeline_obj.start_time = this->current_ms;
+    timeline_obj.bpm = parsed_bpm;
+    state.bpm = parsed_bpm;
+    state.curr_timeline->push_back(timeline_obj);
+    add_tempo_point(parsed_bpm);
+}
 
-        TimelineObject bpmchange_timeline;
-        bpmchange_timeline.start_time = this->current_ms;
-        bpmchange_timeline.bpmchange = bpmchange;
-        state.curr_timeline->push_back(bpmchange_timeline);
-    } else {
-        TimelineObject timeline_obj;
-        timeline_obj.start_time = this->current_ms;
-        timeline_obj.bpm = parsed_bpm;
-        state.bpm = parsed_bpm;
-        state.curr_timeline->push_back(timeline_obj);
+// Branches rewind current_ms; their repeated tempo changes land before the last point and are
+// skipped, so the beat map follows the first branch.
+void TJAParser::add_tempo_point(double bpm) {
+    auto& points = master_notes.tempo_map.points;
+    if (current_ms < points.back().ms) return;
+    if (current_ms == points.back().ms) {
+        points.back().bpm = bpm;
+        return;
     }
+    points.push_back({current_ms, master_notes.tempo_map.beat_at(current_ms), bpm});
 }
 
 void TJAParser::handle_GOGOSTART(const std::string& value, ParserState& state) {
@@ -885,13 +1006,11 @@ void TJAParser::handle_DELAY(const std::string& value, ParserState& state) {
         spdlog::warn("Invalid #DELAY value '{}' in {}", value, file_path.string());
         return;
     }
-    if (state.scroll_type == ScrollType::BMSCROLL || state.scroll_type == ScrollType::HBSCROLL) {
-        if (delay_ms > 0) {
-            //Do not modify current_ms, it will be modified live
-            state.delay_current += delay_ms;
-
-            //Delays will be combined between notes, and attached to previous note
-        }
+    if (delay_ms > 0) {
+        // The beat count stands still through a delay (seen with #BMSCROLL / #HBSCROLL)
+        add_tempo_point(0.0);
+        this->current_ms += delay_ms;
+        add_tempo_point(state.bpm);
     } else {
         this->current_ms += delay_ms;
     }
@@ -975,43 +1094,51 @@ void TJAParser::handle_JPOSSCROLL(const std::string& part, ParserState& state) {
         return;
     }
     std::string distance_str = parts[1];
+    replace_all(distance_str, ",", "");
 
-    double delta_x = 0.0f;
-    double delta_y = 0.0f;
+    // A component is pixels ("-94") or, as in TaikoManyGimmicks, a fraction of the default note
+    // field width ("3/5"); the distance is one component or a complex "x+yi" / "x-yi" / "yi"
+    auto component = [&](std::string c, double& out) -> bool {
+        if (c.empty() || c == "+" || c == "-") c += "1";
+        size_t slash = c.find('/');
+        try {
+            if (slash == std::string::npos) {
+                out = std::stod(c);
+            } else {
+                double den = std::stod(c.substr(slash + 1));
+                if (den == 0.0) return false;
+                out = std::stod(c.substr(0, slash)) / den * jpos_field_width;
+            }
+        } catch (const std::exception&) {
+            return false;
+        }
+        return true;
+    };
 
-    if (distance_str.find('i') != std::string::npos) {
-        std::string normalized = distance_str;
-        replace_all(normalized, ".i", "j");
-        replace_all(normalized, "i", "j");
-        replace_all(normalized, ",", "");
-
-        std::smatch match;
-        if (std::regex_match(normalized, match, complex_number_regex)) {
-            try {
-                if (match[1].length() > 0 && match[1].str().back() != 'j') {
-                    delta_x = std::stof(match[1]);
-                }
-                if (match[2].length() > 0) {
-                    std::string imag_str = match[2];
-                    delta_y = std::stof(imag_str);
-                } else if (match[1].length() > 0 && normalized.back() == 'j') {
-                    delta_y = std::stof(match[1]);
-                    delta_x = 0.0f;
-                }
-            } catch (const std::exception&) {
-                spdlog::warn("Invalid #JPOSSCROLL distance '{}' in {}", distance_str, file_path.string());
-                return;
+    double delta_x = 0.0;
+    double delta_y = 0.0;
+    bool valid;
+    if (!distance_str.empty() && distance_str.back() == 'i') {
+        std::string body = distance_str.substr(0, distance_str.size() - 1);
+        size_t split = std::string::npos;
+        for (size_t k = body.size(); k-- > 1;) {
+            char prev = body[k - 1];
+            if ((body[k] == '+' || body[k] == '-') && prev != 'e' && prev != 'E' && prev != '/') {
+                split = k;
+                break;
             }
         }
-    } else {
-        try {
-            double distance = std::stof(distance_str);
-            delta_x = distance;
-            delta_y = 0.0f;
-        } catch (const std::exception&) {
-            spdlog::warn("Invalid #JPOSSCROLL distance '{}' in {}", distance_str, file_path.string());
-            return;
+        if (split == std::string::npos) {
+            valid = component(body.empty() ? "1" : body, delta_y);
+        } else {
+            valid = component(body.substr(0, split), delta_x) && component(body.substr(split), delta_y);
         }
+    } else {
+        valid = component(distance_str, delta_x);
+    }
+    if (!valid) {
+        spdlog::warn("Invalid #JPOSSCROLL distance '{}' in {}", distance_str, file_path.string());
+        return;
     }
 
     if (direction == 0) {
@@ -1045,6 +1172,7 @@ void TJAParser::handle_JPOSSCROLL(const std::string& part, ParserState& state) {
     jpos_scroll.judge_pos_y = state.judge_pos_y;
     jpos_scroll.delta_x = delta_x;
     jpos_scroll.delta_y = delta_y;
+    jpos_scroll.seq = static_cast<int>(state.curr_timeline->size());
 
     state.curr_timeline->push_back(jpos_scroll);
 
@@ -1176,8 +1304,7 @@ Note TJAParser::add_bar(ParserState& state) {
 Note TJAParser::add_note(char item, ParserState& state) {
     Note note = Note();
     note.hit_ms = this->current_ms;
-    state.delay_last_note_ms = this->current_ms;
-    note.display = true;
+    note.display = !state.doron;
     note.type = NoteType(item - '0');
     note.index = state.index;
     note.bpm = state.bpm;

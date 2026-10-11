@@ -3,6 +3,7 @@
 #include "file_navigator/box_folder.h"
 #include "file_navigator/box_back.h"
 #include "file_navigator/navigator.h"
+#include "file_navigator/genre_bg.h"
 #include "player.h"
 #include "diff_sort.h"
 
@@ -16,9 +17,41 @@ SongSelectScript::SongSelectScript() {
     fn_draw_box          = lua_object["draw_box"];
     fn_draw_box_bg       = lua_object["draw_box_bg"];
     fn_draw_background   = lua_object["draw_background"];
+    fn_draw_genre_bg     = lua_object["draw_genre_bg"];
     fn_draw_selector     = lua_object["draw_selector"];
     fn_draw_option_panel = lua_object["draw_option_panel"];
     fn_draw_sort_window  = lua_object["draw_sort_window"];
+}
+
+double SongSelectScript::animation_ms() {
+    const double now = get_current_ms();
+
+    if (fast_open_started_ms) {
+        const double elapsed = std::clamp(now - *fast_open_started_ms, 0.0, 500.0);
+
+        if (elapsed < 500.0) return now + clock_offset_ms + elapsed * 4.0;
+
+        clock_offset_ms += 2000.0;
+        fast_open_started_ms.reset();
+    }
+
+    return now + clock_offset_ms;
+}
+
+void SongSelectScript::start_folder_open() {
+    finish_folder_open();
+
+    if (!global_data.config->general.fast_transitions) return;
+
+    fast_open_started_ms = get_current_ms();
+}
+
+void SongSelectScript::finish_folder_open() {
+    if (!fast_open_started_ms) return;
+
+    // Retain the elapsed offset so skin timers never run backwards when acceleration ends.
+    clock_offset_ms += std::clamp(get_current_ms() - *fast_open_started_ms, 0.0, 500.0) * 4.0;
+    fast_open_started_ms.reset();
 }
 
 void SongSelectScript::update(double current_ms) { call(fn_update, "SongSelect:update", current_ms); }
@@ -54,6 +87,12 @@ bool SongSelectScript::draw_box_bg(BaseBox* box) {
 bool SongSelectScript::draw_background(Navigator* nav) {
     if (!fn_draw_background.valid()) return false;
     call(fn_draw_background, "SongSelect:draw_background", nav);
+    return true;
+}
+
+bool SongSelectScript::draw_genre_bg(GenreBG* genre_bg, float start_pos, float end_pos, BaseBox* folder) {
+    if (!fn_draw_genre_bg.valid()) return false;
+    call(fn_draw_genre_bg, "SongSelect:draw_genre_bg", genre_bg, start_pos, end_pos, box_to_lua(folder));
     return true;
 }
 

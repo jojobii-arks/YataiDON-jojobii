@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <chrono>
+#include <csignal>
+#include <unistd.h>
 #include <thread>
 
 #ifdef __EMSCRIPTEN__
@@ -62,16 +64,6 @@ void emscripten_shutdown() {
 #endif
 }
 
-void emscripten_set_keyboard_visible(bool visible) {
-#ifdef __EMSCRIPTEN__
-    // On Emscripten, keyboard is handled by the browser
-    // We can use emscripten APIs if needed
-    (void)visible;
-#else
-    (void)visible;
-#endif
-}
-
 void emscripten_sync_filesystem() {
 #ifdef __EMSCRIPTEN__
     EM_ASM({
@@ -84,13 +76,5 @@ void emscripten_sync_filesystem() {
     });
 #else
     // Nothing to do on non-Emscripten
-#endif
-}
-
-void emscripten_sleep(unsigned int ms) {
-#ifdef __EMSCRIPTEN__
-    emscripten_sleep(ms);
-#else
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 #endif
 }
