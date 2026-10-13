@@ -387,8 +387,10 @@ void AudioEngine::mix(float* out, unsigned int framesPerBuffer, AudioEngine* eng
                     sf_count_t frames_read = sf_readf_float(mus.file_handle, mus.stream_buffer, mus.buffer_size);
 
                     if (frames_read == 0) {
-                        if (mus.loop) {
-                            sf_seek(mus.file_handle, 0, SEEK_SET);
+                        if (std::atomic_ref<bool>(mus.loop).load(std::memory_order_relaxed)) {
+                            // Gapless wrap: back to the stream's loop point (its
+                            // preview's DEMOSTART), not necessarily the file start.
+                            sf_seek(mus.file_handle, static_cast<sf_count_t>(mus.loop_frame), SEEK_SET);
                             frames_read = sf_readf_float(mus.file_handle, mus.stream_buffer, mus.buffer_size);
                             if (mus.resampler) {
                                 src_reset(mus.resampler);
@@ -457,9 +459,13 @@ void AudioEngine::mix(float* out, unsigned int framesPerBuffer, AudioEngine* eng
                     sf_count_t to_fill = std::min((sf_count_t)mus.buffer_size, frames_left);
 
                     if (to_fill == 0) {
-                        if (mus.loop && mus.pcm_total_frames > 0) {
-                            aref_frame.store(0ULL, std::memory_order_relaxed);
-                            frame_pos = 0;
+                        if (std::atomic_ref<bool>(mus.loop).load(std::memory_order_relaxed) &&
+                            mus.pcm_total_frames > 0) {
+                            const unsigned long long loop_at =
+                                (mus.loop_frame < static_cast<unsigned long long>(mus.pcm_total_frames))
+                                    ? mus.loop_frame : 0ULL;
+                            aref_frame.store(loop_at, std::memory_order_relaxed);
+                            frame_pos = loop_at;
                             to_fill = std::min((sf_count_t)mus.buffer_size, mus.pcm_total_frames);
                         } else {
                             aref_playing.store(false, std::memory_order_release);
@@ -1578,6 +1584,35 @@ void AudioEngine::set_music_volume(const std::string& name, float volume) {
     } else {
         spdlog::warn("Sound {} not found", name);
     }
+}
+
+void AudioEngine::set_music_loop(const std::string& name, bool loop, float loop_start_seconds) {
+    std::shared_lock<std::shared_mutex> guard(rw_lock);
+    auto it = music_streams.find(name);
+    if (it == music_streams.end()) {
+        spdlog::warn("Music stream {} not found", name);
+        return;
+    }
+    music& mus = it->second;
+    if (loop_start_seconds < 0.0f || !std::isfinite(loop_start_seconds)) loop_start_seconds = 0.0f;
+    // The wrap point is expressed in the frames the mixer rewinds: an sndfile
+    // stream is seeked in source frames, a prepared PCM stream is indexed in
+    // device-rate frames (see the restart sites in mix()).
+    if (mus.file_handle) {
+        unsigned long long f = static_cast<unsigned long long>(
+            loop_start_seconds * static_cast<float>(mus.file_info.samplerate));
+        // A loop point at or past EOF would stop playback on the first wrap
+        // (the mixer treats a zero-frame read as a dead stream) -- fall back to
+        // the file start instead.
+        if (mus.file_info.frames > 0 && f >= static_cast<unsigned long long>(mus.file_info.frames)) f = 0;
+        mus.loop_frame = f;
+    } else if (mus.pcm_data) {
+        mus.loop_frame = static_cast<unsigned long long>(
+            loop_start_seconds * static_cast<float>(target_sample_rate));
+    } else {
+        mus.loop_frame = 0;
+    }
+    std::atomic_ref<bool>(mus.loop).store(loop, std::memory_order_relaxed);
 }
 
 bool AudioEngine::is_music_stream_valid(const std::string& name) const {

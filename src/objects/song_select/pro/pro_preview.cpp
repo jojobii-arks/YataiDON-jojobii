@@ -21,6 +21,11 @@ ProPreview::~ProPreview() {
 void ProPreview::start_playback(float start_seconds) {
     playing_ = true;
     audio.stop_sound("bgm");                                  // the preview takes the slot
+    // Loop at the mixer: the wrap happens inside the audio callback (no
+    // main-thread polling, no gap) and returns to the preview point, so the
+    // preview section repeats instead of the file's intro. Must be set while
+    // the stream is loaded and before play_music_stream().
+    audio.set_music_loop("preview", true, start_seconds);
     audio.play_music_stream("preview", VolumePreset::MUSIC);
     audio.seek_music_stream("preview", start_seconds);
 }
@@ -33,13 +38,13 @@ void ProPreview::stop_stream() {
     playing_ = false;
 }
 
-void ProPreview::select(const std::string& song_path, const Clip& clip) {
-    // Same song: keep the running preview. This is the whole point of keying on
-    // the song — Oni next to Ura, or the CHANGE DIFF picker, must not restart it.
-    if (song_ == song_path && (playing_ || pending_)) {
-        spdlog::info("[pro] preview kept: '{}' (same song, no restart)", song_path);
-        return;
-    }
+void ProPreview::hover(const std::string& song_path, const Clip& clip) {
+    // Keyed on the SONG alone: an adjacent Oni/Ura row, the same row re-entered
+    // from the submenu, and the CHANGE DIFF picker all carry the same song_path,
+    // so the live preview is left untouched and never restarts. A song that has
+    // already been attempted is left alone too -- hovering it again every frame
+    // must not re-decode a bank or spam the log for one that has no preview.
+    if (song_ == song_path) return;
 
     stop_stream();
     if (thread_.joinable()) thread_.join();   // a superseded bank decode ends here

@@ -138,9 +138,11 @@ public:
 
         if (library_ready_) handle_input(now);
 
-        // The preview follows the song, not the row (see sync_preview_scope).
+        // The preview follows the song under the cursor (see sync_preview), so
+        // hovering a chart row already started it; there is nothing to start
+        // (or restart) on the don itself.
         preview_.update();          // lands an off-thread .nus3bank decode
-        sync_preview_scope();
+        sync_preview();
 
         if (game_transition.has_value()) {
             game_transition->update(now);
@@ -336,13 +338,10 @@ private:
                 spdlog::info("[pro] chart selected: {} [{}/{}]", r.title, r.course, r.level);
                 model->enter_selected();
                 state_ = UiState::SELECTED;
-                // Keyed on the song: a repeat selection of this song is a no-op
-                // inside ProPreview::select, so the audio keeps playing.
-                {
-                    const ProListModel::SongAudio au = model->song_audio(r.song_path);
-                    preview_.select(r.song_path.string(),
-                                    ProPreview::Clip{au.wave, au.demostart, au.ok});
-                }
+                // The preview is already running: the cursor has rested on this
+                // chart row since it arrived, so sync_preview started it. A
+                // repeat don on the same row (or the CHANGE DIFF picker) leaves
+                // the song key unchanged, so nothing restarts.
                 break;
             default:
                 audio.play_sound("don", VolumePreset::SOUND);
@@ -383,24 +382,45 @@ private:
     }
 
     // ---- preview scope --------------------------------------------------
-    // The preview is keyed to the SONG: ProPreview::select ignores a repeat of
-    // the same song, which covers the CHANGE DIFF picker on its own. An adjacent
-    // Oni/Ura row is reached by backing out of the selection and moving the
-    // cursor, so the preview is kept alive while the cursor still rests on a row
-    // of the previewed song, and the slot goes back to the bgm the moment the
-    // cursor leaves that song (or a chart turns out to have no playable audio).
-    void sync_preview_scope() {
-        if (preview_.song().empty()) return;   // we hold no preview slot
-        const bool live = preview_.playing() || preview_.pending();
-        bool same_song = false;
-        if (model && model->row_count() > 0) {
-            const ProListModel::Row& r = model->cursor_row();
-            same_song = r.kind == ProListModel::RowKind::CHART &&
-                        r.song_path.string() == preview_.song();
+    // The trigger is the CURSOR, not a selection: whatever chart row the cursor
+    // rests on is the song being previewed, exactly as the wheel previews its
+    // focused box. That covers every state that leaves the cursor on a chart
+    // row -- BROWSING, the submenu (SELECTED), the CHANGE DIFF picker, and the
+    // Play Options panel -- with no per-state plumbing.
+    //
+    // ProPreview::hover is keyed on the song, so crossing to another course of
+    // the SAME song (an adjacent Oni/Ura row, or the picker) is a no-op and the
+    // audio keeps playing uninterrupted. Leaving that song for a different
+    // chart, or moving to a NON-chart row (BACK / FILTER / SEARCH / a folder /
+    // a collection), gives the slot back to the bgm: a preview must never
+    // outlive the cursor, play over the game or over another screen.
+    void sync_preview() {
+        // A PLAY / PRACTICE commit already released the slot and handed audio to
+        // the game (see commit_and_play). Do not re-start a preview under the
+        // loading transition or the song itself -- the cursor is still sitting
+        // on that chart row, so without this guard hover would immediately take
+        // the slot back.
+        if (game_transition.has_value()) return;
+
+        const bool have_row = library_ready_ && model && !model->building() && model->row_count() > 0;
+        const ProListModel::Row* row = have_row ? &model->cursor_row() : nullptr;
+
+        if (!row || row->kind != ProListModel::RowKind::CHART) {
+            if (!preview_.song().empty()) {
+                preview_.release();
+                resume_bgm();
+            }
+            return;
         }
-        if (live && same_song) return;         // the preview keeps the slot
-        preview_.release();
-        resume_bgm();
+
+        if (preview_.song() != row->song_path.string()) {
+            const ProListModel::SongAudio au = model->song_audio(row->song_path);
+            preview_.hover(row->song_path.string(),
+                           ProPreview::Clip{au.wave, au.demostart, au.ok});
+        }
+        // A chart with no playable audio (or a failed bank decode) leaves the
+        // slot idle: hand the bgm back rather than holding a silent stream.
+        if (!preview_.playing() && !preview_.pending()) resume_bgm();
     }
 
     static void resume_bgm() {

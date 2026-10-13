@@ -8,9 +8,18 @@
 // (load_music_stream / load_music_stream_prepared + the off-thread .nus3bank
 // decode) rather than inventing a parallel mechanism.
 //
-// The dedupe key is the SONG (the tja path), not the row: selecting another
-// course of the same song — an adjacent Oni/Ura row, or the CHANGE DIFF picker
-// — leaves the live preview untouched so the audio never restarts mid-song.
+// The dedupe key is the SONG (the tja path), not the row: moving between two
+// courses of the same song — an adjacent Oni/Ura row, the same row re-entered
+// from the submenu, or the CHANGE DIFF picker — leaves the live preview
+// untouched so the audio never restarts mid-song.
+//
+// The trigger is the CURSOR, not a selection: whatever chart row the cursor
+// rests on is the song being previewed, exactly as the wheel previews its
+// focused box. The preview also loops. The audio engine had no public music
+// loop call, so AudioEngine::set_music_loop was added (see audio.h): the wrap
+// happens inside the mixer's refill, so it is gapless, and it returns to the
+// stream's own preview point (the tja DEMOSTART / the bank's point) rather
+// than the file intro.
 
 #include "../../../libs/audio.h"
 
@@ -31,9 +40,11 @@ public:
 
     ~ProPreview();
 
-    // A chart row became selected. `song_path` is the dedupe key; `clip` its
-    // audio. The same song as the current preview is a no-op (keeps playing).
-    void select(const std::string& song_path, const Clip& clip);
+    // The cursor came to rest on this chart row. `song_path` is the dedupe key;
+    // `clip` its audio. The same song as the current preview is a no-op (keeps
+    // playing), and a song already given up on is left alone rather than retried
+    // every frame.
+    void hover(const std::string& song_path, const Clip& clip);
     // Per-frame: starts playback once an off-thread .nus3bank decode lands.
     void update();
     // Hand the audio slot back: stop + unload "preview" and clear the key.

@@ -93,6 +93,10 @@ struct music {
     bool is_playing = false;            // Whether the music is currently playing
     unsigned long long current_frame = 0; // Current playback position in frames
     bool loop = false;                  // Whether to loop the music
+    // Where a loop wraps back to (a file stream in source frames, a prepared
+    // PCM stream in device frames). 0 = the file start; the preview sets it to
+    // its DEMOSTART so a looping preview replays the preview section.
+    unsigned long long loop_frame = 0;
 
     float volume = 1.0f;                // Volume multiplier (0.0 to 1.0+)
     float pan = 0.5f;                   // Stereo pan (0.0 = left, 0.5 = center, 1.0 = right)
@@ -167,6 +171,11 @@ public:
     float get_music_time_length(const std::string& name) const;
     float get_music_time_played(const std::string& name) const;
     void  set_music_volume(const std::string& name, float volume);
+    // Loop a music stream at the mixer (gapless -- the wrap happens in the audio
+    // callback, not by polling from the main thread). `loop_start_seconds` is
+    // where the wrap returns to; 0 keeps the file-start behaviour. Set it after
+    // the stream is loaded and before play_music_stream().
+    void  set_music_loop(const std::string& name, bool loop, float loop_start_seconds = 0.0f);
     bool  is_music_stream_valid(const std::string& name) const;
     bool  is_music_stream_playing(const std::string& name) const;
     void  stop_music_stream(const std::string& name);
