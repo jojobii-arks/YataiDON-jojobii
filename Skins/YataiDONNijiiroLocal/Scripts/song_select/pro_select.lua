@@ -242,23 +242,27 @@ local function draw_tier_pill(ids, tier, cx, cy, w, h, text_size, fade)
     if t then draw_text_at(t, cx - t.width / 2, cy, fade) end
 end
 
--- The card base: the design's 3px ink rim with the genre band colour inside it.
-local function card_base(band, x, y, fade)
-    fill_rect(x, y, CARD_W, CARD_H, INK, 255 * fade)
-    fill_rect(x + RIM_T, y + RIM_T, CARD_W - 2 * RIM_T, CARD_H - 2 * RIM_T, band, 255 * fade)
+-- The card base: the genre's own dark rim colour, flat (Joseph 2026-10-13: the
+-- card's border / background / text follow the genre, like the Nijiiro boards).
+-- The plates inside carry the genre BAND colour, so a card reads as one of the
+-- arcade's boards flattened — a dark genre outline with the bright band inside.
+local function card_base(rim, x, y, fade)
+    fill_rect(x, y, CARD_W, CARD_H, rim, 255 * fade)
 end
 
--- the three tan plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
--- NAME(391,994), 6px seams, 11px inset — the SPEC 2 component contract.
-local function chart_plates(x, y, fade)
-    fill_rgb(x + 11, y + 11, 118, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
-    fill_rgb(x + 135, y + 11, 250, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
-    fill_rgb(x + 391, y + 11, 994, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+-- the three plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
+-- NAME(391,994), 6px seams, 11px inset — the SPEC 2 component contract. `fill`
+-- is the genre's band colour; the seams and the border show the genre's rim.
+local function chart_plates(x, y, fade, fill)
+    fill_rect(x + 11, y + 11, 118, 62, fill, 255 * fade)
+    fill_rect(x + 135, y + 11, 250, 62, fill, 255 * fade)
+    fill_rect(x + 391, y + 11, 994, 62, fill, 255 * fade)
 end
 
--- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62)
-local function one_plate(x, y, fade)
-    fill_rgb(x + 11, y + 11, 1374, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+-- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62); `fill`
+-- is the genre band for a folder, the card's own band for BACK / FILTER.
+local function one_plate(x, y, fade, fill)
+    fill_rect(x + 11, y + 11, 1374, 62, fill, 255 * fade)
 end
 
 -- ink-outline placeholder for a missing value (2px box, 30% ink)
@@ -400,8 +404,8 @@ end
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
 local function draw_chart_card(ids, info, x, y, fade)
     local frame = REF[info.genre_index] or 0
-    card_base(BAND[frame] or BAND[0], x, y, fade)
-    chart_plates(x, y, fade)
+    card_base(RIM[frame] or RIM[0], x, y, fade)
+    chart_plates(x, y, fade, BAND[frame] or BAND[0])
 
     local stroke = RIM[frame] or RIM[0]
     local cy = y + CARD_H / 2
@@ -454,8 +458,8 @@ local function draw_folder_card(ids, row, x, y, fade)
     local frame
     if row.kind == "folder" then frame = REF[row.genre_index] or 0
     else frame = COLLECTION_FRAME[row.kind] or 0 end
-    card_base(BAND[frame] or BAND[0], x, y, fade)
-    one_plate(x, y, fade)
+    card_base(RIM[frame] or RIM[0], x, y, fade)
+    one_plate(x, y, fade, BAND[frame] or BAND[0])
     local stroke = RIM[frame] or RIM[0]
     draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_H / 2, fade, 1300)
 end
@@ -464,8 +468,8 @@ end
 local function draw_pair_card(ids, kind, x, y, fade)
     local is_back = (kind == "back")
     local band = is_back and BACK_BAND or FILTER_BAND
-    card_base(band, x, y, fade)
-    one_plate(x, y, fade)
+    card_base(INK, x, y, fade)
+    one_plate(x, y, fade, band)
     local cy = y + CARD_H / 2
     -- the design's icon slot (33,25) 34x34. The skin ships exactly two generic
     -- action badges — diff_select/back_en and diff_select/option_en, the same
@@ -473,7 +477,7 @@ local function draw_pair_card(ids, kind, x, y, fade)
     -- these two rows carry; there is no filter-specific art to draw.
     draw_art(ids, is_back and "back_icon" or "option_icon", x + 50, cy, 34, 34, { fade = fade })
     local label = is_back and "BACK" or "FILTER/SORT"
-    draw_text_at(W(label, 30, RIM[0], 5), x + 83, cy, fade, 800)
+    draw_text_at(W(label, 30, INK, 5), x + 83, cy, fade, 800)
 end
 
 -- The DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
@@ -673,10 +677,11 @@ local function draw_chips(st, x, fade)
     return 3
 end
 
--- chart details panel (380x336): ink shell -> band colour -> tan plate inset 11,
+-- chart details panel (380x336): genre rim shell -> genre band plate inset 11,
 -- text at +26 — FLOW 2's chart details board, at its own y stations. Every line
--- is white-filled with the genre's own rim colour as the stroke (the skin's
--- house style for text on a tan plate).
+-- is white-filled with the genre's own rim colour as the stroke and the panel
+-- itself wears that genre's rim + band (2026-10-13: the details follow the genre
+-- like the card; the dividers are the rim colour at half strength).
 local function draw_details(ids, model, st, x, y, fade)
     local h = 336
     local row = model:row(0)
@@ -690,16 +695,16 @@ local function draw_details(ids, model, st, x, y, fade)
     local band = BAND[frame] or BAND[0]
     local stroke = RIM[frame] or RIM[0]
 
-    fill_rect(x, y, 380, h, INK, 255 * fade)
+    fill_rect(x, y, 380, h, stroke, 255 * fade)              -- the genre's dark rim
     fill_rect(x + 3, y + 3, 374, h - 6, band, 255 * fade)
-    fill_rect(x + 11, y + 11, 358, h - 22, TAN, 255 * fade)
+    fill_rect(x + 11, y + 11, 358, h - 22, band, 255 * fade)  -- the genre's band
 
     local tx = x + 26
     if is_chart then
-        draw_text_at(W("CHART DETAILS", 16, INK, 2), tx, y + 30, fade)
+        draw_text_at(W("CHART DETAILS", 16, stroke, 2), tx, y + 30, fade)
         draw_text_at(W(info.title, 24, stroke, 3), tx, y + 66, fade, 332)
         draw_text_at(W(info.subtitle, 16, stroke, 2), tx, y + 94, fade, 332)
-        fill_rect(tx, y + 122, 332, 2, DIV, 255 * fade)
+        fill_rect(tx, y + 122, 332, 2, rgba(stroke, 150), 255 * fade)
 
         -- course / star / level / branch / tier (@ +134)
         local ay = y + 134
@@ -717,8 +722,8 @@ local function draw_details(ids, model, st, x, y, fade)
             placeholder(tx + 160, ay + 2, 52, 36, fade)
         end
 
-        fill_rect(tx, y + 196, 332, 2, DIV, 255 * fade)
-        draw_text_at(W("SCORE", 14, INK, 2), tx, y + 206, fade)
+        fill_rect(tx, y + 196, 332, 2, rgba(stroke, 150), 255 * fade)
+        draw_text_at(W("SCORE", 14, stroke, 2), tx, y + 206, fade)
         if info.played then
             draw_text_at(W(fmt_num(info.score), 30, stroke, 3), tx, y + 237, fade, 230)
             draw_text_at(W("GOOD", 16, stroke, 2), tx, y + 258, fade)
@@ -742,7 +747,7 @@ local function draw_details(ids, model, st, x, y, fade)
             draw_text_at(W("NO SCORE", 20, stroke, 2), tx + 244, y + 237, fade)
         end
     else
-        draw_text_at(W("FOLDER", 16, INK, 2), tx, y + 30, fade)
+        draw_text_at(W("FOLDER", 16, stroke, 2), tx, y + 30, fade)
         draw_text_at(W(row and row.name or "", 26, stroke, 3), tx, y + 66, fade, 332)
         local sub
         if row and row.kind == "folder" then
