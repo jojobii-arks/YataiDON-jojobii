@@ -7,7 +7,8 @@
 --
 -- Every number below comes off the Penpot page `Spec — pro select` (SPEC 1-5,
 -- FLOWS 1-9), not off taste:
---   card 1396x84 @ x460, pitch 84, rows FLUSH; the genre's own two tones — the
+--   card 1396x80 @ x460 (a 4px gap inside an 84px pitch, Joseph 2026-10-13: each
+--   entry reads as its own piece); the genre's own two tones — the
 --   saturated band as the frame, the band's light panel (panel_of) as the plate
 --   fills, which is the arcade board's own two-tone treatment (Joseph 2026-10-13);
 --   the cursor row's own rim turns gold at 5px (SPEC 3).
@@ -43,6 +44,14 @@ local M = {}
 
 -- ---------------------------------------------------------------- constants
 local CARD_X, CARD_W, CARD_H = 460, 1396, 84
+-- Joseph 2026-10-13: a slight gap between cards so each entry reads (and can be
+-- pulled) as its own piece. The PITCH stays 84 — the pinned cursor row at 532, the
+-- block of 9 and the submenu's own slot below are all untouched — the card is just
+-- drawn 4px shorter (80) with the plates shortened to match, so the ring round the
+-- card stays an even 11px and the gap shows the backdrop between entries.
+local CARD_GAP = 4
+local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
+local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
 local CURSOR_ROW = 4                         -- 5th of 9 rows -> cursor row at y 532
 local MIN_OFF, MAX_OFF = -4, 4               -- 9 rows, y 196..952 (design block)
@@ -258,7 +267,7 @@ end
 -- light panel inside it (Joseph 2026-10-13: the card + details follow the genre,
 -- two-tone like the raw Nijiiro board assets).
 local function card_base(band, x, y, fade)
-    fill_rect(x, y, CARD_W, CARD_H, band, 255 * fade)
+    fill_rect(x, y, CARD_W, CARD_IN, band, 255 * fade)
 end
 
 -- the three plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
@@ -266,16 +275,16 @@ end
 -- is the band's light panel tone, so the plate reads light while the border ring
 -- and the 6px seams between the plates stay the saturated band.
 local function chart_plates(x, y, fade, fill)
-    fill_rect(x + 11, y + 11, 118, 62, fill, 255 * fade)
-    fill_rect(x + 135, y + 11, 250, 62, fill, 255 * fade)
-    fill_rect(x + 391, y + 11, 994, 62, fill, 255 * fade)
+    fill_rect(x + 11, y + 11, 118, PLATE_H, fill, 255 * fade)
+    fill_rect(x + 135, y + 11, 250, PLATE_H, fill, 255 * fade)
+    fill_rect(x + 391, y + 11, 994, PLATE_H, fill, 255 * fade)
 end
 
 -- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62); `fill`
 -- is the light panel of the card's band (folder = its genre, BACK / FILTER = their
 -- own colours), so the card's border ring stays the saturated band.
 local function one_plate(x, y, fade, fill)
-    fill_rect(x + 11, y + 11, 1374, 62, fill, 255 * fade)
+    fill_rect(x + 11, y + 11, 1374, PLATE_H, fill, 255 * fade)
 end
 
 -- ink-outline placeholder for a missing value (2px box, 30% ink)
@@ -398,9 +407,9 @@ end
 local function draw_cursor_rim(x, y, fade)
     local a = 255 * fade
     fill_rgb(x, y, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x, y + CARD_H - CURSOR_T, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x, y + CARD_IN - CURSOR_T, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x, y, CURSOR_T, CARD_IN, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_IN, GOLD[1], GOLD[2], GOLD[3], a)
 end
 
 -- The cursor caps on the list's card: the same clamp as everywhere else, at the
@@ -410,8 +419,8 @@ end
 -- is NOT drawn: the engine exposes no rounded variant of the fill path, so the
 -- brackets are straight-edged.
 local function draw_cursor_caps(x, y, fade)
-    clamp_cap(x, y, CARD_H, true, fade, CLAMP_ARM_MAX, 5, 13)
-    clamp_cap(x + CARD_W, y, CARD_H, false, fade, CLAMP_ARM_MAX, 5, 13)
+    clamp_cap(x, y, CARD_IN, true, fade, CLAMP_ARM_MAX, 5, 13)
+    clamp_cap(x + CARD_W, y, CARD_IN, false, fade, CLAMP_ARM_MAX, 5, 13)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
@@ -421,7 +430,7 @@ local function draw_chart_card(ids, info, x, y, fade)
     chart_plates(x, y, fade, panel_of(BAND[frame] or BAND[0]))
 
     local stroke = RIM[frame] or RIM[0]
-    local cy = y + CARD_H / 2
+    local cy = y + CARD_IN / 2
 
     -- SCORE section — rank art then crown, 14px inside an 11px plate
     local sx = x + 25
@@ -474,7 +483,7 @@ local function draw_folder_card(ids, row, x, y, fade)
     card_base(BAND[frame] or BAND[0], x, y, fade)
     one_plate(x, y, fade, panel_of(BAND[frame] or BAND[0]))
     local stroke = RIM[frame] or RIM[0]
-    draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_H / 2, fade, 1300)
+    draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_IN / 2, fade, 1300)
 end
 
 -- BACK / FILTER-SORT pair rows — FLOW 2: band + ONE plate, icon at 33, label at 83
@@ -483,7 +492,7 @@ local function draw_pair_card(ids, kind, x, y, fade)
     local band = is_back and BACK_BAND or FILTER_BAND
     card_base(band, x, y, fade)
     one_plate(x, y, fade, panel_of(band))
-    local cy = y + CARD_H / 2
+    local cy = y + CARD_IN / 2
     -- the design's icon slot (33,25) 34x34. The skin ships exactly two generic
     -- action badges — diff_select/back_en and diff_select/option_en, the same
     -- pair the controls strip wears for BACK and SETTINGS — so those are what
@@ -1046,8 +1055,8 @@ function M.draw(self, model)
     -- the card slot DIRECTLY BELOW the cursor card (the card itself stays put
     -- above). "Below" is read as the next slot of the list, not as a gap and not as
     -- a push:
-    --   * the rows are FLUSH at an 84px pitch with no gap to sit in (the design's
-    --     block of 9), so a gap reading does not exist;
+    --   * the 4px inter-card gap is far too small to hold a 84px panel, so "below"
+    --     has to read as the next slot of the design's block of 9;
     --   * pushing the rows below down would shove the bottom row of the block into
     --     the footer hints, and it would break the list's own composition;
     --   * the slot below is the row nearest the card you are acting on, and the
