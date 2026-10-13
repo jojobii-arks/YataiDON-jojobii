@@ -188,6 +188,7 @@ private:
         if (pc.sort == "SCORE")      model->set_sort(ProListModel::Sort::SCORE);
         else if (pc.sort == "CROWN") model->set_sort(ProListModel::Sort::CROWN);
         else if (pc.sort == "TIER")  model->set_sort(ProListModel::Sort::TIER);
+        else if (pc.sort == "LEVEL") model->set_sort(ProListModel::Sort::LEVEL);
         else                         model->set_sort(ProListModel::Sort::ALPHA);
     }
 
@@ -205,6 +206,7 @@ private:
             case ProListModel::Sort::SCORE: pc.sort = "SCORE"; break;
             case ProListModel::Sort::CROWN: pc.sort = "CROWN"; break;
             case ProListModel::Sort::TIER:  pc.sort = "TIER";  break;
+            case ProListModel::Sort::LEVEL: pc.sort = "LEVEL"; break;
             case ProListModel::Sort::ALPHA: pc.sort = "ALPHA"; break;
         }
         save_config(*global_data.config);
@@ -237,11 +239,17 @@ private:
             if (r_kat) { model->move_filter_cursor(+1); audio.play_sound("kat", VolumePreset::SOUND); }
             if (don) {
                 audio.play_sound("don", VolumePreset::SOUND);
-                model->advance_filter_value();
+                const bool confirm = model->advance_filter_value();
                 save_pro_config();
-                spdlog::info("[pro] filter row {} advance (star {}, tier '{}', sort {})",
-                             model->filter_cursor(), model->filter().star, model->filter().tier,
-                             model->sort_name());
+                spdlog::info("[pro] filter focus {} entry {} value {} (star {}, tier '{}', sort {})",
+                             model->filter_focus_name(), model->filter_cursor(),
+                             model->filter_value_cursor(), model->filter().star,
+                             model->filter().tier, model->sort_name());
+                if (confirm) {
+                    model->close_filter();
+                    state_ = UiState::BROWSING;
+                    spdlog::info("[pro] filter dialog confirmed -> browsing");
+                }
             }
             return;
         }

@@ -159,7 +159,7 @@ struct ProViewConfig {
     bool diff_ura = true;
     int star = 0;                 // 0 = ALL, else 1..10
     std::string tier = "";        // "" = ALL, "NONE", else a tier letter
-    std::string sort = "ALPHA";   // SCORE | CROWN | ALPHA | TIER
+    std::string sort = "ALPHA";   // SCORE | CROWN | ALPHA | TIER | LEVEL
 };
 
 struct Config {

@@ -670,22 +670,30 @@ local function draw_details(ids, model, st, x, y, fade)
     end
 end
 
--- ---- the Filter/Sort dialog (FLOW 5) --------------------------------------
+-- ---- the Filter/Sort dialog (FLOW 5, control rework) ----------------------
 -- shell (360,190) 1200x700 -> tan plate inset 3 -> a 62px header band.
--- Rows: DIFFICULTY cy 318, STAR cy 418, TIER cy 508, SORT cy 618; footer cy 728.
--- kat moves the item cursor, don advances that item's value (SPEC 5 proposal).
+-- TWO focus levels (the rework):
+--   ENTRY — kat walks the entries top-to-bottom: DIFFICULTY cy 318, STAR cy 418,
+--           TIER cy 508, SORT cy 622, and CONFIRM down beside the footer. The
+--           entry in focus wears the rim around its own label tile; don goes
+--           into that entry's group. Don on CONFIRM applies and closes.
+--   GROUP — kat walks the entry's values and don commits. DIFFICULTY toggles
+--           and STAYS (its own exit is the checkmark cell beside the toggles);
+--           STAR / TIER / SORT commit and drop back to ENTRY. The value in
+--           focus wears the rim on its own cell.
+-- The vocabulary is single and stays that way: a gold FILL is an option that is
+-- ON, an ink rim is where the cursor is and nothing else wears one.
 local DLG_X, DLG_Y, DLG_W, DLG_H = 360, 190, 1200, 700
 
-local function dlg_row_label(text2, cy, fade)
-    draw_text_at(W(text2, 26, INK, 3), DLG_X + 40, cy, fade)
-end
-
--- The dialog draws ONE border style: dlg_rim (the shared cursor mark, defined
--- with the other pieces) marks the cursor AND every chosen / on state — the
--- difficulty toggles that are on, the chosen star, tier and sort values — so the
--- dialog speaks a single vocabulary instead of switching between gold fills,
--- bespoke gold rings and colour-flipped rims. The design's gold FILLS stay: on
--- goes gold, off goes tan.
+-- The dialog's ONE border, and it marks the CURSOR only -- the entry in focus at
+-- the top level, the value in focus inside a group, and nothing else. An option
+-- that is ON is a gold FILL, never a rim, so the two states can never be
+-- confused: fill = what is set, rim = where you are. Ink reads on a gold tile, a
+-- tan tile and a tier colour alike, and it is the screen's own rim colour (the
+-- cards and the tier pills both rim in ink).
+-- dlg_rim itself is defined once, up with the other shared pieces (submenu-below
+-- moved it there so draw_controls can use it). The merge left a second,
+-- byte-identical copy here, which is dropped.
 local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade, fill_a)
     fill_rect(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade)
     local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
@@ -693,11 +701,36 @@ local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline,
     if t then draw_text_at(t, x + (w - t.width) / 2, y + h / 2, fade, w - 4) end
 end
 
+-- a pixel checkmark, drawn from unit cells so it needs no glyph in the font.
+-- 7 x 5 cells: the down stroke steps to the bottom then the up stroke climbs.
+local function dlg_check(x, y, w, h, colour, fade)
+    local u = 7
+    local pts = { { 0, 2 }, { 1, 3 }, { 2, 4 }, { 3, 3 }, { 4, 2 }, { 5, 1 }, { 6, 0 } }
+    local x0 = x + (w - 7 * u) / 2
+    local y0 = y + (h - 5 * u) / 2
+    for _, p in ipairs(pts) do
+        fill_rgb(x0 + p[1] * u, y0 + p[2] * u, u, u,
+                 colour[1], colour[2], colour[3], 255 * fade)
+    end
+end
+
+-- an entry's label; when the ENTRY-level cursor is on this entry the rim goes
+-- around the label tile, which is how the top level shows where you are
+local function dlg_entry_label(text2, cy, active, fade)
+    local t = W(text2, 26, INK, 3)
+    draw_text_at(t, DLG_X + 40, cy, fade)
+    if active then
+        dlg_rim(DLG_X + 28, cy - 22, (t and t.width or 160) + 24, 44, fade)
+    end
+end
+
 local function draw_filter_dialog(model, st, fade)
     local ids = M._ids()   -- the difficulty toggles draw the real course art
-    local cur = st.filter_cursor or 0
-    -- cursor: 0-4 are the difficulty toggles, 5 star, 6 tier, 7 sort. It draws as
-    -- a rim (dlg_cursor); every fill on these rows is a VALUE, never the cursor.
+    local focus = st.filter_focus or "entry"
+    local cur = st.filter_cursor or 0     -- entry 0..4, and the entered entry while in a group
+    local val = st.filter_value or 0      -- index inside the entered group
+    local entry_focus = (focus == "entry")
+    local group_focus = (focus == "group")
 
     fill_rect(0, 0, 1920, 1080, INK, 175 * fade)                       -- scrim
     fill_rect(DLG_X, DLG_Y, DLG_W, DLG_H, INK, 255 * fade)             -- shell
@@ -705,40 +738,46 @@ local function draw_filter_dialog(model, st, fade)
     fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade)  -- header
     draw_text_at(W("FILTER/SORT", 30, INK, 3), DLG_X + 36, DLG_Y + 34, fade)
 
-    -- DIFFICULTY — a gold tile means ON, a tan tile OFF; the rim marks both the
-    -- toggles that are on and the tile the cursor sits on
-    dlg_row_label("DIFFICULTY", DLG_Y + 128, fade)
+    -- DIFFICULTY — a gold tile means ON, a tan tile OFF. At the top level the rim
+    -- is on the entry's label; inside the group it is on the toggle in focus.
+    dlg_entry_label("DIFFICULTY", DLG_Y + 128, entry_focus and cur == 0, fade)
     local d = st.diff or {}
     for i = 1, 5 do
-        local x = DLG_X + 290 + (i - 1) * 174
+        local x = DLG_X + 290 + (i - 1) * 162
         local y = DLG_Y + 96
         local on = d[i] and true or false
-        fill_rect(x, y, 166, 64, on and GOLD or TAN_D, 255 * fade)
+        fill_rect(x, y, 158, 64, on and GOLD or TAN_D, 255 * fade)
         -- the toggle's real art (frame = course index) so the tile says WHICH
         -- course it is; whether it is on is the tile fill behind the icon
-        draw_art(ids, "course", x + 31, y + 32, 34, 34, { frame = i - 1, fade = fade })
+        draw_art(ids, "course", x + 30, y + 32, 34, 34, { frame = i - 1, fade = fade })
         local t = T(COURSE_NAME[i], 22, INK, on and GOLD or TAN_D, 3)
-        if t then draw_text_at(t, x + 52 + (106 - t.width) / 2, y + 32, fade) end
-        if cur == i - 1 then dlg_rim(x, y, 166, 64, fade) end
+        if t then draw_text_at(t, x + 50 + (100 - t.width) / 2, y + 32, fade) end
+        if group_focus and cur == 0 and val == i - 1 then dlg_rim(x, y, 158, 64, fade) end
     end
+    -- The difficulty group's own exit: a checkmark cell to the side of the
+    -- toggles. It is the only way out of the group (don toggles and stays), and
+    -- don on it returns to the top level with the cursor on DIFFICULTY.
+    local ckx, cky = DLG_X + 1104, DLG_Y + 96
+    fill_rect(ckx, cky, 72, 64, TAN_D, 255 * fade)
+    dlg_check(ckx, cky, 72, 64, INK, fade)
+    if group_focus and cur == 0 and val == 5 then dlg_rim(ckx, cky, 72, 64, fade) end
 
     -- STAR — ALL, then 1..10 (no 10+ bucket: this library tops out at ★10). The
-    -- chosen star keeps the design's gold fill and wears the dialog's rim; the
-    -- cursor is the same rim, spanning the row.
-    dlg_row_label("STAR", DLG_Y + 228, fade)
+    -- chosen star is the gold fill; the rim is the cursor alone.
+    dlg_entry_label("STAR", DLG_Y + 228, entry_focus and cur == 1, fade)
     local star = st.star or 0
-    dlg_cell(DLG_X + 290, DLG_Y + 196, 72, 64, "ALL",
-             (star == 0) and GOLD or TAN_D, WHITE, nil, INK, fade)
-    for n = 1, 10 do
-        dlg_cell(DLG_X + 367 + (n - 1) * 77, DLG_Y + 196, 72, 64, tostring(n),
+    for n = 0, 10 do
+        local x = (n == 0) and (DLG_X + 290) or (DLG_X + 367 + (n - 1) * 77)
+        local label = (n == 0) and "ALL" or tostring(n)
+        dlg_cell(x, DLG_Y + 196, 72, 64, label,
                  (star == n) and GOLD or TAN_D, WHITE, nil, INK, fade)
-    end
-    if cur == 5 then
-        dlg_rim(DLG_X + 290, DLG_Y + 196, 842, 64, fade)
+        if group_focus and cur == 1 and val == n then
+            dlg_rim(x, DLG_Y + 196, 72, 64, fade)
+        end
     end
 
     -- TIER — that level's own set (never generated: the sets are not monotonic)
-    dlg_row_label("TIER", DLG_Y + 318, fade)
+    dlg_entry_label("TIER", DLG_Y + 318, entry_focus and cur == 2, fade)
     local tier_cells = { "ALL" }
     if star > 0 then
         for _, tv in ipairs(model:tier_set(star)) do tier_cells[#tier_cells + 1] = tv end
@@ -747,7 +786,7 @@ local function draw_filter_dialog(model, st, fade)
     end
     tier_cells[#tier_cells + 1] = "None"
     local cx = DLG_X + 290                     -- flowing: ALL, the level's letters, None last
-    for _, tv in ipairs(tier_cells) do
+    for idx, tv in ipairs(tier_cells) do
         local w = (tv == "ALL" or tv == "None") and 76 or 62
         local x = cx
         cx = cx + w + 4
@@ -768,25 +807,30 @@ local function draw_filter_dialog(model, st, fade)
             fillc, cell_a = TIER_C[tv] or TAN_D, is_cur and 255 or 150
         end
         dlg_cell(x, DLG_Y + 296, w, 44, shown, fillc, WHITE, 22, INK, fade, cell_a)
-    end
-    if cur == 6 then
-        dlg_rim(DLG_X + 290, DLG_Y + 296, (cx - 4) - (DLG_X + 290), 44, fade)
+        -- the group's value cursor tracks the same order the model builds the
+        -- tier list in (ALL, the level's letters, NONE), so idx - 1 is the index
+        if group_focus and cur == 2 and val == idx - 1 then
+            dlg_rim(x, DLG_Y + 296, w, 44, fade)
+        end
     end
 
-    -- SORT — gold is the live sort value, the rim is the cursor (same split)
-    dlg_row_label("SORT", DLG_Y + 432, fade)
+    -- SORT — gold is the live sort value, the rim is the cursor (same split).
+    -- LEVEL is the tier ladder ACROSS levels: ★10 hardest-tier-first down to ★1.
+    dlg_entry_label("SORT", DLG_Y + 432, entry_focus and cur == 3, fade)
     local sort_disp = (st.sort == "A-Z") and "A–Z" or (st.sort or "A–Z")
-    for i, sv in ipairs({ "SCORE", "CROWN", "A–Z", "TIER" }) do
-        local x = DLG_X + 290 + (i - 1) * 216
-        dlg_cell(x, DLG_Y + 396, 208, 64, sv, (sv == sort_disp) and GOLD or TAN_D,
+    local sort_cells = { "SCORE", "CROWN", "A–Z", "TIER", "LEVEL" }
+    for i, sv in ipairs(sort_cells) do
+        local x = DLG_X + 290 + (i - 1) * 172
+        dlg_cell(x, DLG_Y + 396, 166, 64, sv, (sv == sort_disp) and GOLD or TAN_D,
                  WHITE, 24, INK, fade)
-    end
-    if cur == 7 then
-        dlg_rim(DLG_X + 290, DLG_Y + 396, 856, 64, fade)
+        if group_focus and cur == 3 and val == i - 1 then
+            dlg_rim(x, DLG_Y + 396, 166, 64, fade)
+        end
     end
 
-    -- footer — the live match count (a short list reads as filtered, not broken)
-    fill_rect(DLG_X + 40, DLG_Y + 500, DLG_W - 80, 76, TAN_D, 255 * fade)
+    -- footer — the live match count (a short list reads as filtered, not broken),
+    -- and the CONFIRM entry beside it: don here applies and closes the dialog
+    fill_rect(DLG_X + 40, DLG_Y + 500, 700, 76, TAN_D, 255 * fade)
     local match
     if st.context == "root" then
         match = "filter and sort apply inside a folder"
@@ -795,7 +839,11 @@ local function draw_filter_dialog(model, st, fade)
     else
         match = fmt_num(st.charts or 0) .. " charts match"
     end
-    draw_text_at(W(match, 24, INK, 3), DLG_X + 64, DLG_Y + 538, fade, DLG_W - 128)
+    draw_text_at(W(match, 24, INK, 3), DLG_X + 64, DLG_Y + 538, fade, 700 - 48)
+
+    local conf_x, conf_y, conf_w, conf_h = DLG_X + 800, DLG_Y + 500, 360, 76
+    dlg_cell(conf_x, conf_y, conf_w, conf_h, "CONFIRM", TAN_D, WHITE, 26, INK, fade)
+    if entry_focus and cur == 4 then dlg_rim(conf_x, conf_y, conf_w, conf_h, fade) end
 end
 
 -- footer control hints (the FLOW 1 / FLOW 5 guides)

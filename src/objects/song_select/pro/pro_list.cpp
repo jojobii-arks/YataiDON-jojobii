@@ -23,6 +23,29 @@ std::string lower_ascii(std::string s) {
                    [](unsigned char c) { return (char)std::tolower(c); });
     return s;
 }
+
+// The SORT entry's value order — the dialog's 5 cells, in the Lua's own order.
+int sort_index(ProListModel::Sort s) {
+    switch (s) {
+        case ProListModel::Sort::SCORE: return 0;
+        case ProListModel::Sort::CROWN: return 1;
+        case ProListModel::Sort::ALPHA: return 2;
+        case ProListModel::Sort::TIER:  return 3;
+        case ProListModel::Sort::LEVEL: return 4;
+    }
+    return 2;
+}
+
+ProListModel::Sort sort_at_index(int i) {
+    switch (i) {
+        case 0: return ProListModel::Sort::SCORE;
+        case 1: return ProListModel::Sort::CROWN;
+        case 2: return ProListModel::Sort::ALPHA;
+        case 3: return ProListModel::Sort::TIER;
+        case 4: return ProListModel::Sort::LEVEL;
+    }
+    return ProListModel::Sort::ALPHA;
+}
 }  // namespace
 
 // ---- tier helpers ---------------------------------------------------------
@@ -227,7 +250,7 @@ void ProListModel::update() {
 
 void ProListModel::build_songs_step(size_t budget) {
     const auto& levels_map = nav_->library_song_levels();
-    const bool need_tier = !filter_.tier.empty() || sort_ == Sort::TIER;
+    const bool need_tier = !filter_.tier.empty() || sort_ == Sort::TIER || sort_ == Sort::LEVEL;
     size_t done = 0;
     while (build_pos_ < build_songs_.size() && done < budget) {
         const auto& [key, path] = build_songs_[build_pos_];
@@ -282,13 +305,25 @@ void ProListModel::build_songs_step(size_t budget) {
 void ProListModel::build_sort_and_assemble() {
     const Sort mode = sort_;
     std::stable_sort(cand_.begin(), cand_.end(), [mode](const RawRow& a, const RawRow& b) {
-        // Charts never played sort LAST in every mode — never dropped.
-        if (a.played != b.played) return a.played;
-        switch (mode) {
-            case Sort::SCORE: if (a.score != b.score) return a.score > b.score; break;
-            case Sort::CROWN: if (a.crown != b.crown) return a.crown > b.crown; break;
-            case Sort::TIER:  if (a.tier_rank != b.tier_rank) return a.tier_rank > b.tier_rank; break;
-            case Sort::ALPHA: break;
+        if (mode == Sort::LEVEL) {
+            // The tier ladder ACROSS levels, strongest level first: within ★10
+            // hardest-tier-first (SSS .. F, X) then the tier-less ★10 charts,
+            // then all of ★9, then ★8 ... down to ★1. The cross-level grouping
+            // IS the sort, so the played-last convention that is a global
+            // primary key in every other mode drops to a tie-break here.
+            if (a.level != b.level) return a.level > b.level;
+            if (a.tier_rank != b.tier_rank) return a.tier_rank > b.tier_rank;
+            if (a.played != b.played) return a.played;
+        } else {
+            // Charts never played sort LAST in every mode — never dropped.
+            if (a.played != b.played) return a.played;
+            switch (mode) {
+                case Sort::SCORE: if (a.score != b.score) return a.score > b.score; break;
+                case Sort::CROWN: if (a.crown != b.crown) return a.crown > b.crown; break;
+                case Sort::TIER:  if (a.tier_rank != b.tier_rank) return a.tier_rank > b.tier_rank; break;
+                case Sort::ALPHA: break;
+                case Sort::LEVEL: break;   // handled above
+            }
         }
         // Tie-break and the alphabetical mode: title A-Z, then subtitle, then course.
         std::string at = lower_ascii(a.title), bt = lower_ascii(b.title);
@@ -462,6 +497,7 @@ const char* ProListModel::sort_name() const {
         case Sort::CROWN: return "CROWN";
         case Sort::ALPHA: return "A-Z";
         case Sort::TIER:  return "TIER";
+        case Sort::LEVEL: return "LEVEL";
     }
     return "A-Z";
 }
@@ -627,55 +663,112 @@ void ProListModel::open_search(const std::string& query) {
 }
 
 void ProListModel::move_filter_cursor(int delta) {
-    constexpr int kFilterRows = 8;   // 5 difficulty toggles + star + tier + sort
-    constexpr int kTierRow    = 6;   // the tier row's index
-    filter_cursor_ = ((filter_cursor_ + delta) % kFilterRows + kFilterRows) % kFilterRows;
-    // The TIER row is only meaningful once a star level is chosen (★ALL walks the
-    // whole ladder, which is not a filter the user can act on here). While no star
-    // is set, step the cursor straight past it in the direction of travel — the
-    // caller only ever moves by one row, so one extra step clears it for good.
-    if (filter_.star == 0 && filter_cursor_ == kTierRow) {
-        filter_cursor_ = ((filter_cursor_ + delta) % kFilterRows + kFilterRows) % kFilterRows;
+    if (!filter_group_open()) {
+        // ENTRY level: walk the five entries — Difficulty, Star, Tier, Sort, Confirm.
+        filter_cursor_ = ((filter_cursor_ + delta) % kEntryCount + kEntryCount) % kEntryCount;
+        return;
+    }
+    // GROUP level: walk the entered entry's own values.
+    const int n = filter_value_count();
+    if (n <= 0) return;
+    filter_value_cursor_ = ((filter_value_cursor_ + delta) % n + n) % n;
+}
+
+// Every value of the TIER entry, in the dialog's draw order: ALL, the level's
+// own ladder (or, at ★ALL, the whole ladder), then NONE last.
+std::vector<std::string> ProListModel::filter_tier_values() const {
+    std::vector<std::string> vals;
+    vals.emplace_back("");                     // ALL
+    if (filter_.star == 0) {
+        for (const auto& t : ladder_hard_to_blank()) vals.push_back(t);
+    } else {
+        for (const auto& t : tier_set_for_level(filter_.star)) vals.push_back(t);
+    }
+    vals.emplace_back("NONE");
+    return vals;
+}
+
+int ProListModel::filter_value_count() const {
+    switch (filter_cursor_) {
+        case kEntryDiff: return 6;                          // Easy..Ura + the checkmark
+        case kEntryStar: return 11;                         // ALL + 1..10
+        case kEntryTier: return (int)filter_tier_values().size();
+        case kEntrySort: return 5;                          // SCORE CROWN A-Z TIER LEVEL
+        default: return 0;                                  // CONFIRM is an action, not a group
     }
 }
 
-void ProListModel::advance_filter_value() {
+void ProListModel::enter_filter_group() {
+    if (filter_cursor_ == kEntryConfirm) return;   // Confirm has no group
+    filter_focus_ = FilterFocus::GROUP;
     switch (filter_cursor_) {
-        case 0: case 1: case 2: case 3: case 4:
-            filter_.diff[filter_cursor_] = !filter_.diff[filter_cursor_];
+        case kEntryDiff:
+            filter_value_cursor_ = 0;              // start on the Easy toggle
             break;
-        case 5:
-            filter_.star = (filter_.star + 1) % 11;    // ALL -> 1..10 -> ALL
-            filter_.tier.clear();                      // switching the star clamps tier to ALL
+        case kEntryStar:
+            filter_value_cursor_ = filter_.star;   // land on the current value
             break;
-        case 6: {
-            std::vector<std::string> vals;
-            vals.emplace_back("");                     // ALL
-            if (filter_.star == 0) {
-                for (const auto& t : ladder_hard_to_blank()) vals.push_back(t);
-            } else {
-                for (const auto& t : tier_set_for_level(filter_.star)) vals.push_back(t);
+        case kEntryTier: {
+            const std::vector<std::string> vals = filter_tier_values();
+            filter_value_cursor_ = (int)vals.size() - 1;   // NONE if the letter is not in the set
+            for (size_t i = 0; i < vals.size(); ++i) {
+                if (vals[i] == filter_.tier) { filter_value_cursor_ = (int)i; break; }
             }
-            vals.emplace_back("NONE");
-            size_t idx = 0;
-            for (size_t i = 0; i < vals.size(); i++) {
-                if (vals[i] == filter_.tier) { idx = i; break; }
-            }
-            filter_.tier = vals[(idx + 1) % vals.size()];
             break;
         }
-        case 7:
-            switch (sort_) {
-                case Sort::SCORE: sort_ = Sort::CROWN; break;
-                case Sort::CROWN: sort_ = Sort::ALPHA; break;
-                case Sort::ALPHA: sort_ = Sort::TIER;  break;
-                case Sort::TIER:  sort_ = Sort::SCORE; break;
-            }
+        case kEntrySort:
+            filter_value_cursor_ = sort_index(sort_);
+            break;
+        default:
+            break;
+    }
+}
+
+void ProListModel::exit_filter_group() {
+    filter_focus_ = FilterFocus::ENTRY;
+    filter_value_cursor_ = 0;
+    // filter_cursor_ already names the group we came out of, so focus lands
+    // back on Difficulty / Star / Tier / Sort exactly as the spec asks.
+}
+
+bool ProListModel::advance_filter_value() {
+    if (!filter_group_open()) {
+        if (filter_cursor_ == kEntryConfirm) return true;   // apply + close (the caller does it)
+        enter_filter_group();
+        return false;
+    }
+
+    switch (filter_cursor_) {
+        case kEntryDiff:
+            if (filter_value_cursor_ == 5) { exit_filter_group(); return false; }  // the checkmark
+            if (filter_value_cursor_ >= 0 && filter_value_cursor_ < 5)
+                filter_.diff[filter_value_cursor_] = !filter_.diff[filter_value_cursor_];
+            break;                                  // stay in the group — toggle several
+        case kEntryStar:
+            filter_.star = filter_value_cursor_;    // 0 = ALL, 1..10
+            filter_.tier.clear();                   // switching the star clamps tier to ALL
+            exit_filter_group();
+            break;
+        case kEntryTier: {
+            const std::vector<std::string> vals = filter_tier_values();
+            if (filter_value_cursor_ >= 0 && filter_value_cursor_ < (int)vals.size())
+                filter_.tier = vals[filter_value_cursor_];
+            exit_filter_group();
+            break;
+        }
+        case kEntrySort:
+            sort_ = sort_at_index(filter_value_cursor_);
+            exit_filter_group();
             break;
         default:
             break;
     }
     if (context_ != Context::ROOT) begin_build();
+    return false;
+}
+
+const char* ProListModel::filter_focus_name() const {
+    return filter_group_open() ? "group" : "entry";
 }
 
 void ProListModel::move_control(int delta) {

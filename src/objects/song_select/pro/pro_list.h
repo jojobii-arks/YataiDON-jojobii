@@ -39,7 +39,14 @@ public:
         FILTER,    // the periodic FILTER row (opens the Filter/Sort dialog)
     };
 
-    enum class Sort { SCORE, CROWN, ALPHA, TIER };
+    enum class Sort { SCORE, CROWN, ALPHA, TIER, LEVEL };
+
+    // The Filter/Sort dialog has TWO focus levels (control rework, 2026-10):
+    //   ENTRY — kat walks the entries (Difficulty, Star, Tier, Sort, Confirm);
+    //           don enters the entry's group (Confirm applies and closes).
+    //   GROUP — kat walks the entered group's values; don commits per the
+    //           entry's own contract (see advance_filter_value).
+    enum class FilterFocus { ENTRY, GROUP };
 
     // View Settings (persisted to config.toml in a later step).
     struct Filter {
@@ -160,13 +167,34 @@ public:
 
     // ---- Filter/Sort dialog (TAB / the filter card row) ----------------
     bool filter_open() const { return filter_open_; }
-    void open_filter() { filter_open_ = true; filter_cursor_ = 0; }
+    void open_filter() {
+        filter_open_ = true;
+        filter_cursor_ = kEntryDiff;
+        filter_focus_ = FilterFocus::ENTRY;
+        filter_value_cursor_ = 0;
+    }
     void close_filter() { filter_open_ = false; }
-    int filter_cursor() const { return filter_cursor_; }   // 0..4 diff rows, 5 star, 6 tier, 7 sort
+    // ENTRY focus: filter_cursor() is the entry index 0..4 —
+    // 0 DIFFICULTY, 1 STAR, 2 TIER, 3 SORT, 4 CONFIRM. GROUP focus:
+    // filter_cursor() stays the entry the focus is inside (0..3) and
+    // filter_value_cursor() is the value index within it —
+    //   Difficulty 0..4 = the Easy..Ura toggles, 5 = the confirm checkmark
+    //   Star       0 = ALL, 1..10 = the level
+    //   Tier       0 = ALL, then the level's ladder, last index = NONE
+    //   Sort       0..4 = SCORE, CROWN, A-Z, TIER, LEVEL
+    int filter_cursor() const { return filter_cursor_; }
+    int filter_value_cursor() const { return filter_value_cursor_; }
+    FilterFocus filter_focus() const { return filter_focus_; }
+    const char* filter_focus_name() const;
     void move_filter_cursor(int delta);
-    // don on the open dialog: toggles that row's value and rebuilds. A star
-    // change clears the tier selection (SPEC 3: SSS at ★10 does not exist at ★9).
-    void advance_filter_value();
+    // don on the open dialog. ENTRY: enters the entry's group, except CONFIRM,
+    // which returns true (the caller applies + closes). GROUP: Difficulty
+    // toggles the value under the cursor and STAYS (its exit is the checkmark,
+    // which returns to ENTRY with the cursor on Difficulty); Star / Tier / Sort
+    // commit the value and return to ENTRY with the cursor on that entry. A
+    // star change clears the tier selection (SPEC 3: SSS at ★10 does not exist
+    // at ★9). Returns true when the dialog should close.
+    bool advance_filter_value();
 
     // ---- SEARCH --------------------------------------------------------
     void open_search(const std::string& query);
@@ -209,8 +237,19 @@ private:
 
     // Filter/Sort dialog + search state.
     bool filter_open_ = false;
-    int filter_cursor_ = 0;
+    int filter_cursor_ = 0;            // ENTRY: 0..4; GROUP: the entered entry (0..3)
+    FilterFocus filter_focus_ = FilterFocus::ENTRY;
+    int filter_value_cursor_ = 0;      // GROUP: index within the entered entry's values
     std::string search_query_;
+
+    // Entry indices of the dialog's top level.
+    static constexpr int kEntryDiff = 0, kEntryStar = 1, kEntryTier = 2,
+                         kEntrySort = 3, kEntryConfirm = 4, kEntryCount = 5;
+    bool filter_group_open() const { return filter_focus_ == FilterFocus::GROUP; }
+    void enter_filter_group();                                    // ENTRY -> GROUP
+    void exit_filter_group();                                     // GROUP -> ENTRY
+    int filter_value_count() const;                               // values in the entered entry
+    std::vector<std::string> filter_tier_values() const;          // ALL, the ladder, NONE
 
     // ---- build state (chunked) -----------------------------------------
     void begin_build();

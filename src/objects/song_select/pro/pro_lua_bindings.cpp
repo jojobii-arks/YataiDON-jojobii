@@ -80,7 +80,9 @@ void register_pro_lua_bindings(sol::state& lua) {
             t["selected"]     = m.selected();
             t["control"]      = m.control_index();
             t["filter_open"]  = m.filter_open();
-            t["filter_cursor"] = m.filter_cursor();
+            t["filter_cursor"] = m.filter_cursor();   // entry 0..4 (ENTRY) / entered entry (GROUP)
+            t["filter_focus"] = std::string(m.filter_focus_name());   // "entry" | "group"
+            t["filter_value"] = m.filter_value_cursor();              // GROUP: value index
             t["active_course"] = m.active_course();
             t["picker_open"]  = m.picker_open();
             t["picker"]       = m.picker_cursor();
