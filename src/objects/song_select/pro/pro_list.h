@@ -191,9 +191,15 @@ private:
     // Selected-chart state.
     bool selected_ = false;
     int control_ = 2;                     // PLAY centred
+    // CHANGE DIFF is per-row view state: the swap repaints ONE chart row — the
+    // one selected when it committed — never the whole list. swap_row_ holds that
+    // row's index (-1 = no swap in force); swap_course_ holds its course.
     std::optional<int> swap_course_;
+    int swap_row_ = -1;
     bool picker_open_ = false;
     int picker_cursor_ = 0;
+
+    void clear_swap() { swap_course_.reset(); swap_row_ = -1; }
 
     // Filter/Sort dialog + search state.
     bool filter_open_ = false;

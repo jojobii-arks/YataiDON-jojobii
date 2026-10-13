@@ -6,6 +6,8 @@
 #include "../../../libs/scores.h"
 #include "../../../libs/tier_list.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cctype>
 
@@ -100,7 +102,7 @@ bool ProListModel::chart_passes_filter(const fs::path& song_path, int course, in
 
 void ProListModel::reset_root() {
     selected_ = false;
-    swap_course_.reset();
+    clear_swap();
     context_ = Context::ROOT;
     folder_path_.clear();
     context_genre_ = 0;
@@ -112,7 +114,7 @@ void ProListModel::open_folder_row(int row_index) {
     if (row_index < 0 || row_index >= (int)rows_.size()) return;
     const Row& r = rows_[row_index];
     selected_ = false;
-    swap_course_.reset();
+    clear_swap();
     switch (r.kind) {
         case RowKind::FOLDER:   context_ = Context::FOLDER;   folder_path_ = r.folder_path; break;
         case RowKind::RECENT:   context_ = Context::RECENT;   folder_path_.clear(); break;
@@ -130,7 +132,7 @@ void ProListModel::open_folder_row(int row_index) {
 
 void ProListModel::back_to_root() {
     selected_ = false;
-    swap_course_.reset();
+    clear_swap();
     context_ = Context::ROOT;
     folder_path_.clear();
     context_genre_ = 0;
@@ -425,6 +427,9 @@ void ProListModel::move_cursor(int delta) {
     if (rows_.empty()) return;
     int n = (int)rows_.size();
     cursor_ = ((cursor_ + delta) % n + n) % n;
+    // The swap rides one row: stepping the cursor off it drops the swap, so it
+    // can never leak onto the row we landed on.
+    if (swap_row_ >= 0 && cursor_ != swap_row_) clear_swap();
 }
 
 void ProListModel::skip_cursor(int dir) {
@@ -435,6 +440,7 @@ void ProListModel::set_cursor(int index) {
     if (rows_.empty()) { cursor_ = 0; return; }
     int n = (int)rows_.size();
     cursor_ = ((index % n) + n) % n;
+    if (swap_row_ >= 0 && cursor_ != swap_row_) clear_swap();
 }
 
 // ---- filter / sort --------------------------------------------------------
@@ -512,7 +518,12 @@ ProListModel::ChartInfo ProListModel::resolve(int row_index) const {
 
 ProListModel::ChartInfo ProListModel::resolve_display(int row_index) const {
     ChartInfo info = resolve(row_index);
+    // The CHANGE DIFF swap is per-row view state: it repaints ONLY the chart row
+    // that was selected when it committed (swap_row_), never its neighbours —
+    // every other row resolves to its own stored course. selected_ is the parent
+    // gate; the row check is what scopes it to one row.
     if (!info.found || !selected_ || !swap_course_.has_value()) return info;
+    if (row_index != swap_row_) return info;
     const int course = *swap_course_;
     if (course == info.course) return info;
     const Row& r = rows_[row_index];
@@ -570,12 +581,13 @@ void ProListModel::enter_selected() {
     if (rows_.empty() || cursor_row().kind != RowKind::CHART) return;
     selected_ = true;
     control_ = 2;   // PLAY centred
-    swap_course_.reset();
+    clear_swap();
+    swap_row_ = cursor_;   // CHANGE DIFF will scope its swap to THIS row alone
 }
 
 void ProListModel::leave_selected() {
     selected_ = false;
-    swap_course_.reset();
+    clear_swap();
     control_ = 2;
     picker_open_ = false;
 }
@@ -584,7 +596,7 @@ void ProListModel::open_search(const std::string& query) {
     if (query.empty()) return;
     search_query_ = query;
     selected_ = false;
-    swap_course_.reset();
+    clear_swap();
     context_ = Context::SEARCH;
     folder_path_.clear();
     context_genre_ = 0;
@@ -674,6 +686,8 @@ void ProListModel::commit_picker() {
     if (!picker_open_) return;
     set_active_course(picker_cursor_);
     picker_open_ = false;
+    spdlog::info("[pro] change diff commit: swap scoped to row {} -> course {}",
+                 swap_row_, swap_course_.value_or(-1));
 }
 
 void ProListModel::cancel_picker() {
