@@ -4,6 +4,7 @@
 #include "../../../libs/filesystem.h"
 #include "../../../libs/global_data.h"
 #include "../../../libs/scores.h"
+#include "../../../libs/song_parser.h"
 #include "../../../libs/tier_list.h"
 
 #include <spdlog/spdlog.h>
@@ -573,6 +574,27 @@ bool ProListModel::branch_flag(const fs::path& song_path, int course) const {
     }
     if (course < 0 || course > 4) return false;
     return it->second[course] == 1;
+}
+
+ProListModel::SongAudio ProListModel::song_audio(const fs::path& song_path) const {
+    // Parsed on demand and cached, one entry per song — never for the whole list.
+    const std::string key = song_path.string();
+    auto it = audio_cache_.find(key);
+    if (it == audio_cache_.end()) {
+        SongAudio a;
+        try {
+            SongParser parser(song_path);   // the tja parse happens on construction
+            parser.get_metadata();
+            a.wave = parser.metadata.wave;
+            a.demostart = (float)parser.metadata.demostart;
+        } catch (const std::exception&) {
+            // leave empty: this chart simply has no preview
+        }
+        std::error_code ec;
+        a.ok = !a.wave.empty() && fs::exists(a.wave, ec);
+        it = audio_cache_.emplace(key, std::move(a)).first;
+    }
+    return it->second;
 }
 
 // ---- selected-chart state -------------------------------------------------

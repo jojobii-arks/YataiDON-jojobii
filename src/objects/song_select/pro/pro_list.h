@@ -124,6 +124,12 @@ public:
     ChartInfo resolve(int row_index) const;         // row as stored
     ChartInfo resolve_display(int row_index) const; // honours the selected-state swap
 
+    // The chart's own audio, read from its tja on demand and cached (the parse
+    // is per song, never for the whole list — ALL is ~12k rows). Mirrors the
+    // branch_cache_ pattern below.
+    struct SongAudio { std::filesystem::path wave; float demostart = 0.0f; bool ok = false; };
+    SongAudio song_audio(const std::filesystem::path& song_path) const;
+
     // ---- the selected-chart state (DON flow) --------------------------
     bool selected() const { return selected_; }
     void enter_selected();
@@ -237,6 +243,9 @@ private:
 
     // song path -> is_branching per course (1 = yes, 2 = no; parsed once on demand)
     mutable std::unordered_map<std::string, std::array<uint8_t, 5>> branch_cache_;
+
+    // song path -> wave / demostart (parsed once on demand, for the preview)
+    mutable std::unordered_map<std::string, SongAudio> audio_cache_;
 
 public:
     // Tier helpers the Filter/Sort dialog needs (per-level sets are NOT

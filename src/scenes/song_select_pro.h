@@ -5,6 +5,7 @@
 #include "../libs/audio.h"
 #include "../objects/song_select/file_navigator/box_song.h"
 #include "../objects/song_select/pro/pro_list.h"
+#include "../objects/song_select/pro/pro_preview.h"
 
 #include <algorithm>
 #include <array>
@@ -45,6 +46,9 @@ public:
         last_moved_ = -1e9;
         search_guard_until_ = 0.0;
         clear_input_buffers();
+        // and the preview's own slot, so a re-entry can never inherit a stream
+        // that the previous visit left playing
+        preview_.release();
         SongBox::reset_bgm_slot();
         audio.play_sound("bgm", VolumePreset::MUSIC);
         script = std::make_unique<SongSelectScript>();
@@ -75,6 +79,9 @@ public:
 
     Screens on_screen_end(Screens next_screen) override {
         if (search_box.has_value()) set_keyboard_visible(false);
+        // The "preview" stream is ours while it plays: stop it before the base
+        // unloads all audio, and never leave another screen a song playing.
+        preview_.release();
         spdlog::info("pro_select: leaving to {}", next_screen);
         return Screen::on_screen_end(next_screen);
     }
@@ -131,6 +138,10 @@ public:
 
         if (library_ready_) handle_input(now);
 
+        // The preview follows the song, not the row (see sync_preview_scope).
+        preview_.update();          // lands an off-thread .nus3bank decode
+        sync_preview_scope();
+
         if (game_transition.has_value()) {
             game_transition->update(now);
             if (game_transition->is_finished()) {
@@ -157,6 +168,7 @@ private:
     enum class UiState { BROWSING, SELECTED, PICKER, OPTIONS, FILTER, SEARCH };
 
     std::unique_ptr<ProListModel> model;
+    ProPreview preview_;              // owns the "preview" stream, keyed on the song
     Screens game_target_ = Screens::GAME;
     bool library_ready_ = false;
     UiState state_ = UiState::BROWSING;
@@ -316,6 +328,13 @@ private:
                 spdlog::info("[pro] chart selected: {} [{}/{}]", r.title, r.course, r.level);
                 model->enter_selected();
                 state_ = UiState::SELECTED;
+                // Keyed on the song: a repeat selection of this song is a no-op
+                // inside ProPreview::select, so the audio keeps playing.
+                {
+                    const ProListModel::SongAudio au = model->song_audio(r.song_path);
+                    preview_.select(r.song_path.string(),
+                                    ProPreview::Clip{au.wave, au.demostart, au.ok});
+                }
                 break;
             default:
                 audio.play_sound("don", VolumePreset::SOUND);
@@ -355,6 +374,31 @@ private:
         }
     }
 
+    // ---- preview scope --------------------------------------------------
+    // The preview is keyed to the SONG: ProPreview::select ignores a repeat of
+    // the same song, which covers the CHANGE DIFF picker on its own. An adjacent
+    // Oni/Ura row is reached by backing out of the selection and moving the
+    // cursor, so the preview is kept alive while the cursor still rests on a row
+    // of the previewed song, and the slot goes back to the bgm the moment the
+    // cursor leaves that song (or a chart turns out to have no playable audio).
+    void sync_preview_scope() {
+        if (preview_.song().empty()) return;   // we hold no preview slot
+        const bool live = preview_.playing() || preview_.pending();
+        bool same_song = false;
+        if (model && model->row_count() > 0) {
+            const ProListModel::Row& r = model->cursor_row();
+            same_song = r.kind == ProListModel::RowKind::CHART &&
+                        r.song_path.string() == preview_.song();
+        }
+        if (live && same_song) return;         // the preview keeps the slot
+        preview_.release();
+        resume_bgm();
+    }
+
+    static void resume_bgm() {
+        if (!audio.is_sound_playing("bgm")) audio.play_sound("bgm", VolumePreset::MUSIC);
+    }
+
     // ---- play / practice commits ---------------------------------------
     void start_game() { commit_and_play(Screens::GAME); }
     void start_practice() { commit_and_play(Screens::GAME_PRACTICE); }
@@ -389,6 +433,9 @@ private:
         audio.play_sound("don", VolumePreset::SOUND);
         model->leave_selected();
         state_ = UiState::BROWSING;
+        // The game takes over the audio: stop the preview now, so it never plays
+        // under the loading transition (or over the song itself).
+        preview_.release();
         game_target_ = target;
         game_transition.emplace(row.title, row.subtitle, false);
         if (fs::exists(row.song_path.parent_path() / "Loading.png")) {
