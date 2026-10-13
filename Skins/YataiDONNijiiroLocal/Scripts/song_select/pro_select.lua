@@ -270,21 +270,67 @@ local function placeholder(x, y, w, h, fade)
     fill_rgb(x + w - 2, y, 2, h, INK[1], INK[2], INK[3], a)
 end
 
--- The screen's cursor mark: a 3px ink rim inset into the element. Declared here,
--- above every user, because it is ONE idiom for the cursor across the screen — the
--- Filter/Sort dialog's current row and the selected chart's controls strip both
--- use it — so nothing has to switch between gold fills, bespoke gold rings and
--- colour-flipped rims to say where the cursor is. Ink reads on a gold tile, a tan
--- tile and a tier colour alike, and it is the screen's own rim colour (the cards
--- and the tier pills both rim in ink). A gold FILL means something else entirely:
--- an option that is ON (the dialog's difficulty toggles, its chosen star / tier /
--- sort). Nothing in the controls strip is a toggle, so nothing in it fills gold.
-local function dlg_rim(x, y, w, h, fade)
+-- The screen's cursor mark: the gold C-CLAMP. A C-shaped bracket of gold with a
+-- 3px ink outline, hugging each end of whatever the cursor is on — and it is the
+-- ONE idiom for the cursor across the whole screen: the browse list's card, the
+-- selected chart's controls strip (BACK / SETTINGS / PLAY / PRACTICE / CHANGE
+-- DIFF), the CHANGE DIFF picker, and every cell of the Filter/Sort dialog. Nothing
+-- else is a clamp, and nothing else wears gold for the cursor.
+--
+-- The rule at each scale, so a glance at any surface reads the same way:
+--   * the clamp hugs the CURSOR ELEMENT's own box — one cap on each edge. It never
+--     brackets a row of cells and never a nesting level, so the thing a cap touches
+--     is always the thing it means;
+--   * the arms reach inward by a quarter of the element's width, floored at 14 and
+--     capped at 33 (the card's own arm) — a 72px star cell still shows two clear
+--     brackets, while a 1396px card does not grow a bar;
+--   * the spine is a fixed 9px of gold (the card's own), because the clamp's WEIGHT
+--     is half of what makes it unmistakable, and it does not shrink with the target;
+--   * it adapts VERTICALLY: the spine runs the element's full height plus a 4-5px
+--     overflow at each end, so a 44px tier pill, a 64px toggle and a 76px CONFIRM
+--     button all read as a clamp and never as a rim.
+-- Placement: every surface below has the spine flush on the element's edge and the
+-- ink outline 3px proud of it, which fits the 4-6px gutters these rows are packed
+-- with. The card is the one exception — the design board its mark comes from puts
+-- the spine 13px OUTSIDE the card (see draw_cursor_caps), which is why the list
+-- draws it last, after every row.
+--
+-- Why ink-and-gold never collides with the screen's OTHER gold: a gold FILL is an
+-- option that is ON (a dialog toggle, its chosen star / tier / sort) and it is a
+-- SOLID plate, while the clamp is a HOLLOW bracket whose ink outline runs on both
+-- sides of its gold — so even a clamp landing on a gold fill keeps a line of ink
+-- between the two golds and still reads as a bracket. The focused DIFFICULTY
+-- toggle can be ON and clamped at the same time, and the two stay distinct.
+local CLAMP_ARM_MAX, CLAMP_ARM_MIN = 33, 14
+local CLAMP_SW, CLAMP_OV_MIN, CLAMP_OV_MAX = 9, 4, 5
+
+-- one cap of the clamp: a C-bracket opening inward, ink outline then gold on top of
+-- it. `x_edge` is the element edge the cap hugs; open_right = true hugs the LEFT
+-- edge (the bracket's arms point right, into the element), false hugs the RIGHT edge
+-- (arms point left). `ox` is how far outside the element the gold spine sits (the
+-- card's own design uses 13; every other surface uses 0).
+local function clamp_cap(x_edge, y, h, open_right, fade, arm, ov, ox)
     local a = 255 * fade
-    fill_rgb(x, y, w, 3, INK[1], INK[2], INK[3], a)
-    fill_rgb(x, y + h - 3, w, 3, INK[1], INK[2], INK[3], a)
-    fill_rgb(x, y, 3, h, INK[1], INK[2], INK[3], a)
-    fill_rgb(x + w - 3, y, 3, h, INK[1], INK[2], INK[3], a)
+    local sw = CLAMP_SW
+    local spine = open_right and (x_edge - ox) or (x_edge + ox - sw)
+    local arm_x = open_right and spine or (spine - (arm - sw))
+    local y0, h0 = y - ov, h + 2 * ov
+    local y1 = y0 + h0 - sw                      -- the lower arm, flush with the spine
+    -- ink first, gold 3px inside it on every side (the card's own 15/9, 39/33 step)
+    fill_rect(spine - 3, y0 - 3, sw + 6, h0 + 6, INK, a)
+    fill_rect(arm_x - 3, y0 - 3, arm + 6, sw + 6, INK, a)
+    fill_rect(arm_x - 3, y1 - 3, arm + 6, sw + 6, INK, a)
+    fill_rect(spine, y0, sw, h0, GOLD, a)
+    fill_rect(arm_x, y0, arm, sw, GOLD, a)
+    fill_rect(arm_x, y1, arm, sw, GOLD, a)
+end
+
+-- the clamp on an element of any size: one cap on each edge, flush on them
+local function draw_clamp(x, y, w, h, fade)
+    local arm = math.max(CLAMP_ARM_MIN, math.min(CLAMP_ARM_MAX, math.floor(w / 4 + 0.5)))
+    local ov  = math.max(CLAMP_OV_MIN, math.min(CLAMP_OV_MAX, math.floor(h / 16 + 0.5)))
+    clamp_cap(x, y, h, true, fade, arm, ov, 0)
+    clamp_cap(x + w, y, h, false, fade, arm, ov, 0)
 end
 
 -- ------------------------------------------------------------------- ids
@@ -340,30 +386,15 @@ local function draw_cursor_rim(x, y, fade)
     fill_rgb(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
 end
 
--- The cursor caps: a C-shaped gold bracket at each end of the cursor card,
--- ink-outlined (FLOW 2's selected card). The design board is 1428x100 over a
--- 1396x84 card, so the board origin sits (16,8) outside the card — every
--- coordinate below is the board value shifted into card-relative space
--- (board x-16, y-8). Ink is the outline; the gold is inset 3px inside it on
--- every side, so ink is written first per cap. The design's 13px outer-corner
--- radius is NOT drawn: the engine exposes only tex.draw_rect (no rounded
--- variant), so the brackets are straight-edged.
+-- The cursor caps on the list's card: the same clamp as everywhere else, at the
+-- card's own design numbers — the board is 1428x100 over a 1396x84 card, so the
+-- spine sits 13px outside the card, the arms reach 33px in and the gold runs 5px
+-- past the card top and bottom (100 tall). The design's 13px outer-corner radius
+-- is NOT drawn: the engine exposes no rounded variant of the fill path, so the
+-- brackets are straight-edged.
 local function draw_cursor_caps(x, y, fade)
-    local a = 255 * fade
-    -- left cap: ink outline, then gold on top of it
-    fill_rect(x - 16, y - 8, 15, 100, INK, a)
-    fill_rect(x - 16, y - 8, 39, 15, INK, a)
-    fill_rect(x - 16, y + 77, 39, 15, INK, a)
-    fill_rect(x - 13, y - 5, 9, 94, GOLD, a)
-    fill_rect(x - 13, y - 5, 33, 9, GOLD, a)
-    fill_rect(x - 13, y + 80, 33, 9, GOLD, a)
-    -- right cap: the same six shapes, mirrored across the card
-    fill_rect(x + 1397, y - 8, 15, 100, INK, a)
-    fill_rect(x + 1373, y - 8, 39, 15, INK, a)
-    fill_rect(x + 1373, y + 77, 39, 15, INK, a)
-    fill_rect(x + 1400, y - 5, 9, 94, GOLD, a)
-    fill_rect(x + 1376, y - 5, 33, 9, GOLD, a)
-    fill_rect(x + 1376, y + 80, 33, 9, GOLD, a)
+    clamp_cap(x, y, CARD_H, true, fade, CLAMP_ARM_MAX, 5, 13)
+    clamp_cap(x + CARD_W, y, CARD_H, false, fade, CLAMP_ARM_MAX, 5, 13)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
@@ -445,19 +476,20 @@ local function draw_pair_card(ids, kind, x, y, fade)
     draw_text_at(W(label, 30, RIM[0], 5), x + 83, cy, fade, 800)
 end
 
--- the DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
+-- The DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
 -- Colours and stations off the Penpot strip render: the plate is the dialog's
 -- TAN_D and every tile is TAN (the old ink plate + TAN_D tiles sat a step too
 -- dark, so the strip read as a row of chocolate buttons). This strip is no longer
 -- drawn in the selected card's own slot — it is its own panel BELOW that card (see
--- draw_pro) — so the current tile is marked with the screen's cursor rim, dlg_rim,
--- and NOT with a gold fill: with the strip standing alone a gold tile would read
--- as an option that is ON, which nothing here is. The tile fill stays TAN and the
--- label keeps the size/thickness step that says which entry the cursor is on.
--- BACK / SETTINGS / CHANGE DIFF carry their real badge art — a 32x32 mark on the
--- centre the flat square used to occupy — and their labels centre at the design's
--- tx+138, not the tile centre: an icon tile pushes its label ~7px right (PLAY and
--- PRACTICE, which have no icon, centre on the tile at tx+131).
+-- draw_pro) — so the current tile is marked with the screen's cursor clamp and NOT
+-- with a gold fill: with the strip standing alone a gold tile would read as an
+-- option that is ON, which nothing here is. The label keeps the size/thickness
+-- step that says which entry the cursor is on, and the clamp is drawn AFTER the
+-- row (its ink sits 3px proud of the tile, which the next tile must not paint
+-- over). BACK / SETTINGS / CHANGE DIFF carry their real badge art — a 32x32 mark
+-- on the centre the flat square used to occupy — and their labels centre at the
+-- design's tx+138, not the tile centre: an icon tile pushes its label ~7px right
+-- (PLAY and PRACTICE, which have no icon, centre on the tile at tx+131).
 local function draw_controls(ids, st, x, y, fade)
     local cy = y + 11 + 30                     -- the tile row's own centre (not the card's)
     fill_rect(x + 11, y + 4, 1374, 74, TAN_D, 255 * fade)
@@ -465,7 +497,6 @@ local function draw_controls(ids, st, x, y, fade)
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
         fill_rect(tx, y + 11, 262, 60, TAN, 255 * fade)
-        if is_cur then dlg_rim(tx, y + 11, 262, 60, fade) end
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
@@ -479,10 +510,16 @@ local function draw_controls(ids, st, x, y, fade)
         draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, TAN,
                       is_cur and 4 or 3, label_x, y + 11, label_w, 60, fade)
     end
+    -- the cursor: the clamp on the current tile, after the whole row
+    local cur = (st.control or 1) + 1
+    if cur >= 1 and cur <= 5 then
+        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, 60, fade)
+    end
 end
 
--- the CHANGE DIFF picker: plate (11,4,1374,74), five 262x60 segments at a 276
--- pitch. Every station below is measured off the 1396x84 design artboard, where
+-- The CHANGE DIFF picker: plate (11,4,1374,74), five 262x60 segments at a 276
+-- pitch — the same row geometry as the controls strip, so its cursor wears the same
+-- clamp. Every station below is measured off the 1396x84 design artboard, where
 -- the five segments are identical to the pixel: course icon centred at +34,
 -- level number centred at +80, the label's LEFT edge at +104, the 56x30 tier
 -- pill at +192..+248. They hang off the SEGMENT's centre (y+41, 7px inside the
@@ -492,6 +529,7 @@ local function draw_picker(ids, model, st, x, y, fade)
     local seg_top = y + 11
     local cy = seg_top + 30                       -- the segment's own centre, y+41
     fill_rect(x + 11, y + 4, 1374, 74, INK, 255 * fade)
+    local cur_x
     for i = 1, 5 do
         local sx = x + 17 + (i - 1) * 276
         local cell = cells[i] or {}
@@ -501,17 +539,12 @@ local function draw_picker(ids, model, st, x, y, fade)
         -- ink so it reads as disabled — the cursor never lands on it (skipped in
         -- move_picker), and the commit refuses it.
         fill_rect(sx, seg_top, 262, 60, present and TAN_D or INK, 255 * fade)
-        -- The current segment keeps its own fill and is marked with the design's
-        -- 3px gold ring — the same idiom the Filter/Sort dialog uses for its
-        -- current cell — so the tier's colour still reads. (Filling the whole
-        -- tile gold buried the pill colour and made the segment unreadable.)
-        if is_cur then
-            local a = 255 * fade
-            fill_rgb(sx, seg_top, 262, 3, GOLD[1], GOLD[2], GOLD[3], a)
-            fill_rgb(sx, seg_top + 57, 262, 3, GOLD[1], GOLD[2], GOLD[3], a)
-            fill_rgb(sx, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
-            fill_rgb(sx + 259, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
-        end
+        if is_cur then cur_x = sx end            -- the clamp, drawn after the row:
+                                                 -- on the ink plate its outline is
+                                                 -- invisible and the gold bracket
+                                                 -- alone marks the segment, and the
+                                                 -- tier pill keeps its own colour
+                                                 -- (a gold FILL would bury it)
         if present then
             draw_art(ids, "course", sx + 34, cy, 40, 40, { frame = i - 1, fade = fade })
             local lv = math.max(1, math.min(11, cell.level or 1))
@@ -528,13 +561,14 @@ local function draw_picker(ids, model, st, x, y, fade)
         else
             -- a difficulty this song does not have: kept visible so the song's
             -- shape still reads, but unmistakably NOT selectable — the plate is
-            -- inked out above, the placeholder and label are dimmed, and no gold
-            -- ring can ever mark it (the cursor skips it).
+            -- inked out above, the placeholder and label are dimmed, and no clamp
+            -- can ever mark it (the cursor skips it).
             placeholder(sx + 14, cy - 20, 40, 40, fade * 0.45)
             draw_text_at(T(COURSE_NAME[i], 22, { 150, 130, 112 }, INK, 2),
                          sx + 104, cy, fade * 0.4)
         end
     end
+    if cur_x then draw_clamp(cur_x, seg_top, 262, 60, fade) end
 end
 
 -- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
@@ -727,25 +761,27 @@ end
 -- TWO focus levels (the rework):
 --   ENTRY — kat walks the entries top-to-bottom: DIFFICULTY cy 318, STAR cy 418,
 --           TIER cy 508, SORT cy 622, and CONFIRM down beside the footer. The
---           entry in focus wears the rim around its own label tile; don goes
+--           entry in focus wears the clamp around its own label tile; don goes
 --           into that entry's group. Don on CONFIRM applies and closes.
 --   GROUP — kat walks the entry's values and don commits. DIFFICULTY toggles
 --           and STAYS (its own exit is the checkmark cell beside the toggles);
 --           STAR / TIER / SORT commit and drop back to ENTRY. The value in
---           focus wears the rim on its own cell.
+--           focus wears the clamp on its own cell.
 -- The vocabulary is single and stays that way: a gold FILL is an option that is
--- ON, an ink rim is where the cursor is and nothing else wears one.
+-- ON; the gold CLAMP is where the cursor is, and nothing else wears one.
 local DLG_X, DLG_Y, DLG_W, DLG_H = 360, 190, 1200, 700
 
--- The dialog's ONE border, and it marks the CURSOR only -- the entry in focus at
--- the top level, the value in focus inside a group, and nothing else. An option
--- that is ON is a gold FILL, never a rim, so the two states can never be
--- confused: fill = what is set, rim = where you are. Ink reads on a gold tile, a
--- tan tile and a tier colour alike, and it is the screen's own rim colour (the
--- cards and the tier pills both rim in ink).
--- dlg_rim itself is defined once, up with the other shared pieces (submenu-below
--- moved it there so draw_controls can use it). The merge left a second,
--- byte-identical copy here, which is dropped.
+-- The dialog's NESTED clamps. The top level clamps the entry's label tile, the
+-- value inside a group clamps its own cell, and entering a group does NOT take the
+-- entry's clamp away: both are on screen (DIFFICULTY's label clamp at DLG_X+28..~230,
+-- its value clamp further right at DLG_X+290..), so you can always see WHICH entry
+-- you are in as well as WHICH value. They cannot be confused with each other: each
+-- cap touches exactly the one element it marks (nothing brackets a row or a level),
+-- the two sit in their own columns with a clear gap, and only the DIFFICULTY group
+-- holds the cursor at all (STAR / TIER / SORT commit and drop straight back to
+-- ENTRY). The checkmark cell beside the toggles is the difficulty group's own exit
+-- and is a VALUE of that group (val 5), so it takes the same clamp as a toggle —
+-- the entry clamp on the label is what says you are still inside DIFFICULTY.
 local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade, fill_a)
     fill_rect(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade)
     local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
@@ -766,13 +802,14 @@ local function dlg_check(x, y, w, h, colour, fade)
     end
 end
 
--- an entry's label; when the ENTRY-level cursor is on this entry the rim goes
--- around the label tile, which is how the top level shows where you are
+-- an entry's label; the ENTRY-level cursor (and the entry you are inside, while a
+-- group is open) clamps the label tile, which is how the top level shows where you
+-- are. 48 tall rather than the old rim's 44 so the clamp's arms clear the text.
 local function dlg_entry_label(text2, cy, active, fade)
     local t = W(text2, 26, INK, 3)
     draw_text_at(t, DLG_X + 40, cy, fade)
     if active then
-        dlg_rim(DLG_X + 28, cy - 22, (t and t.width or 160) + 24, 44, fade)
+        draw_clamp(DLG_X + 28, cy - 24, (t and t.width or 160) + 24, 48, fade)
     end
 end
 
@@ -790,9 +827,11 @@ local function draw_filter_dialog(model, st, fade)
     fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade)  -- header
     draw_text_at(W("FILTER/SORT", 30, INK, 3), DLG_X + 36, DLG_Y + 34, fade)
 
-    -- DIFFICULTY — a gold tile means ON, a tan tile OFF. At the top level the rim
-    -- is on the entry's label; inside the group it is on the toggle in focus.
-    dlg_entry_label("DIFFICULTY", DLG_Y + 128, entry_focus and cur == 0, fade)
+    -- DIFFICULTY — a gold tile means ON, a tan tile OFF. The clamp is on the
+    -- entry's LABEL whenever DIFFICULTY is the focused entry (at both focus levels
+    -- — see the nested-clamp note above), and a second clamp goes on the value in
+    -- focus inside the group.
+    dlg_entry_label("DIFFICULTY", DLG_Y + 128, cur == 0, fade)
     local d = st.diff or {}
     for i = 1, 5 do
         local x = DLG_X + 290 + (i - 1) * 162
@@ -804,7 +843,6 @@ local function draw_filter_dialog(model, st, fade)
         draw_art(ids, "course", x + 30, y + 32, 34, 34, { frame = i - 1, fade = fade })
         local t = T(COURSE_NAME[i], 22, INK, on and GOLD or TAN_D, 3)
         if t then draw_text_at(t, x + 50 + (100 - t.width) / 2, y + 32, fade) end
-        if group_focus and cur == 0 and val == i - 1 then dlg_rim(x, y, 158, 64, fade) end
     end
     -- The difficulty group's own exit: a checkmark cell to the side of the
     -- toggles. It is the only way out of the group (don toggles and stays), and
@@ -812,32 +850,42 @@ local function draw_filter_dialog(model, st, fade)
     local ckx, cky = DLG_X + 1104, DLG_Y + 96
     fill_rect(ckx, cky, 72, 64, TAN_D, 255 * fade)
     dlg_check(ckx, cky, 72, 64, INK, fade)
-    if group_focus and cur == 0 and val == 5 then dlg_rim(ckx, cky, 72, 64, fade) end
+    -- the group's value clamp, drawn after every tile AND the checkmark cell, so
+    -- nothing paints over it (the clamps sit in the row's 4-8px gutters)
+    if group_focus and cur == 0 then
+        if val == 5 then
+            draw_clamp(ckx, cky, 72, 64, fade)
+        elseif val >= 0 and val <= 4 then
+            draw_clamp(DLG_X + 290 + val * 162, DLG_Y + 96, 158, 64, fade)
+        end
+    end
 
     -- STAR — ALL, then 1..10 (no 10+ bucket: this library tops out at ★10). The
-    -- chosen star is the gold fill; the rim is the cursor alone.
-    dlg_entry_label("STAR", DLG_Y + 228, entry_focus and cur == 1, fade)
+    -- chosen star is the gold fill; the clamp is the cursor alone.
+    dlg_entry_label("STAR", DLG_Y + 228, cur == 1, fade)
     local star = st.star or 0
     for n = 0, 10 do
         local x = (n == 0) and (DLG_X + 290) or (DLG_X + 367 + (n - 1) * 77)
         local label = (n == 0) and "ALL" or tostring(n)
         dlg_cell(x, DLG_Y + 196, 72, 64, label,
                  (star == n) and GOLD or TAN_D, WHITE, nil, INK, fade)
-        if group_focus and cur == 1 and val == n then
-            dlg_rim(x, DLG_Y + 196, 72, 64, fade)
-        end
+    end
+    if group_focus and cur == 1 and val >= 0 and val <= 10 then
+        local x = (val == 0) and (DLG_X + 290) or (DLG_X + 367 + (val - 1) * 77)
+        draw_clamp(x, DLG_Y + 196, 72, 64, fade)
     end
 
     -- TIER — at a chosen star, that level's own set (never generated: the sets
     -- are not monotonic). With STAR=ALL there is no set to offer — a tier needs
     -- a star level — so only ALL and NONE show.
-    dlg_entry_label("TIER", DLG_Y + 318, entry_focus and cur == 2, fade)
+    dlg_entry_label("TIER", DLG_Y + 318, cur == 2, fade)
     local tier_cells = { "ALL" }
     if star > 0 then
         for _, tv in ipairs(model:tier_set(star)) do tier_cells[#tier_cells + 1] = tv end
     end
     tier_cells[#tier_cells + 1] = "None"
     local cx = DLG_X + 290                     -- flowing: ALL, the level's letters, None last
+    local tier_sel_x, tier_sel_w
     for idx, tv in ipairs(tier_cells) do
         local w = (tv == "ALL" or tv == "None") and 76 or 62
         local x = cx
@@ -862,23 +910,24 @@ local function draw_filter_dialog(model, st, fade)
         -- the group's value cursor tracks the same order the model builds the
         -- tier list in (ALL, the level's letters, NONE), so idx - 1 is the index
         if group_focus and cur == 2 and val == idx - 1 then
-            dlg_rim(x, DLG_Y + 296, w, 44, fade)
+            tier_sel_x, tier_sel_w = x, w
         end
     end
+    if tier_sel_x then draw_clamp(tier_sel_x, DLG_Y + 296, tier_sel_w, 44, fade) end
 
-    -- SORT — gold is the live sort value, the rim is the cursor (same split).
+    -- SORT — gold is the live sort value, the clamp is the cursor (same split).
     -- LEVEL is the tier ladder ACROSS levels: ★10 hardest-tier-first down to ★1.
-    dlg_entry_label("SORT", DLG_Y + 432, entry_focus and cur == 3, fade)
+    dlg_entry_label("SORT", DLG_Y + 432, cur == 3, fade)
     local sort_disp = (st.sort == "A-Z") and "A–Z" or (st.sort or "A–Z")
     local sort_cells = { "SCORE", "CROWN", "A–Z", "LEVEL" }
+    local sort_sel_x
     for i, sv in ipairs(sort_cells) do
         local x = DLG_X + 290 + (i - 1) * 172
         dlg_cell(x, DLG_Y + 396, 166, 64, sv, (sv == sort_disp) and GOLD or TAN_D,
                  WHITE, 24, INK, fade)
-        if group_focus and cur == 3 and val == i - 1 then
-            dlg_rim(x, DLG_Y + 396, 166, 64, fade)
-        end
+        if group_focus and cur == 3 and val == i - 1 then sort_sel_x = x end
     end
+    if sort_sel_x then draw_clamp(sort_sel_x, DLG_Y + 396, 166, 64, fade) end
 
     -- footer — the live match count (a short list reads as filtered, not broken),
     -- and the CONFIRM entry beside it: don here applies and closes the dialog
@@ -895,7 +944,7 @@ local function draw_filter_dialog(model, st, fade)
 
     local conf_x, conf_y, conf_w, conf_h = DLG_X + 800, DLG_Y + 500, 360, 76
     dlg_cell(conf_x, conf_y, conf_w, conf_h, "CONFIRM", TAN_D, WHITE, 26, INK, fade)
-    if entry_focus and cur == 4 then dlg_rim(conf_x, conf_y, conf_w, conf_h, fade) end
+    if entry_focus and cur == 4 then draw_clamp(conf_x, conf_y, conf_w, conf_h, fade) end
 end
 
 -- NO footer control hints. FLOW 1 / FLOW 5 carried two grey pills here -- a
