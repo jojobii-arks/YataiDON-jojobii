@@ -131,8 +131,6 @@ progress-companion/   # app id: taiko-stats
 Handoff originally suggested Tauri 2; v1 ships Electron + Node+Vite.
 API shapes match the plan so a Tauri shell can still wrap later.
 
-
-
 ## Relation to in-game pad
 
 | | In-game Nijiiro pad | Companion |

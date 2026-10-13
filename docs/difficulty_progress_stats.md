@@ -4,8 +4,6 @@ Local feature research + design notes for an official-style **progress card**:
 per-course (and optionally per-★) counts of performance grades and crowns
 (Clear / FC / DFC).
 
-
-
 ## What arcade / Nijiiro shows
 
 On difficulty sort / course pad, a small card shows:

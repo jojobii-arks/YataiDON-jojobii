@@ -22,5 +22,3 @@ Wired into `Skins/YataiDONNijiiro/Scripts/song_select/song_select.lua`
 
 Only songs present in `data/tier_data.json` (ESE community list) show a badge.
 Empty / missing bindings are skipped (`pcall` + empty-string guard).
-
-

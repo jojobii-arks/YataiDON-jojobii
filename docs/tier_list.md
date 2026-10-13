@@ -2,7 +2,6 @@
 
 Fork feature: star-level Tier Sort + gold tier badges on song boards.
 
-
 ## Data
 
 - Artifact: `data/tier_data.json` (static; no network at runtime)
@@ -48,8 +47,7 @@ Details: [`tier_list_lua_hook.md`](tier_list_lua_hook.md)
 
 ## How to test (manual)
 
-1. Build from `build/`,
-   `cmake --build . -j8` then copy `bin/YataiDON.exe` → repo root if needed
+1. Build from `build/` (`cmake --build . -j8`), then copy `bin/YataiDON.exe` → repo root.
 2. Open Tier Sort: ★ level → letter → the wheel filters.
 3. ESE song with a wiki entry (e.g. Namco Original *11:54PM…*): gold letter on closed/open board
 4. Toggle ura when both Oni/Ura are ranked — badge switches with ura mode
@@ -57,5 +55,3 @@ Details: [`tier_list_lua_hook.md`](tier_list_lua_hook.md)
 ## Build
 
 - Toolchain: MSYS2 MinGW (cmake + ninja + g++)
-
-
