@@ -550,6 +550,49 @@ local function draw_chip(x, y, text2, colour, fade)
     if t then draw_text_at(t, x + 12, y + 15, fade, 356) end
 end
 
+-- The CHART chip's difficulty row (Joseph: "for the ANY CHART pill, we should
+-- just show the icons of the easy,normal,hard,oni,ura inline"). The words are
+-- gone; the chip now carries the five difficulty TOGGLES inline, in canonical
+-- order EASY..URA, each a miniature of the Filter/Sort dialog's own tile:
+--   * the SAME art (`diff_sort/diff`, frame = course) the dialog toggles, the
+--     chart cards and the CHANGE DIFF picker all draw, so the chip and the tiles
+--     can never disagree about what a difficulty looks like;
+--   * the SAME vocabulary -- a gold tile is ON, a dimmed tan tile OFF (the
+--     dialog's "a gold FILL is an option that is ON"), so the chip and the dialog
+--     cannot disagree about what "on" means either.
+-- ALL FIVE ON  -> five gold tiles: the old "ANY CHART" state, now read off the art
+--                 rather than a phrase.
+-- A SUBSET ON  -> the ON difficulties stay gold, the OFF ones dim -- the chip
+--                 always shows the whole set, and which of them are lit IS the
+--                 filter. Nothing to parse.
+-- The ★ filter is a separate axis with no icon of its own, so when one is set it
+-- rides as a compact "★N" just right of the row. It was the other half of this
+-- same chip before ("★N · ONI + URA"); no difficulty word is reintroduced.
+-- Tiles are 26x26 inside the chip's 30px plate with 2px of air (the plate's 3px
+-- ink rim swallows the outer pixel), and the art draws at 24 -- the largest the
+-- chip's fixed 30px geometry allows. The glyphs are single bold shapes (the oni
+-- is a solid demon head), so 24px reads; anything smaller would not.
+local DIFF_TILE, DIFF_GAP = 26, 4
+local function draw_chart_chip(x, y, d, star, fade)
+    fill_rect(x, y, 380, 30, INK, 255 * fade)
+    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, NIJI_CHART, 255 * fade)
+    local ids = M._ids()
+    local tx = x + 11
+    local iy = y + math.floor((30 - DIFF_TILE) / 2 + 0.5)
+    for i = 1, 5 do
+        local on = d[i] and true or false
+        local ix = tx + (i - 1) * (DIFF_TILE + DIFF_GAP)
+        fill_rect(ix, iy, DIFF_TILE, DIFF_TILE, on and GOLD or TAN_D, (on and 255 or 130) * fade)
+        draw_art(ids, "course", ix + DIFF_TILE / 2, iy + DIFF_TILE / 2,
+                 DIFF_TILE - 2, DIFF_TILE - 2,
+                 { frame = i - 1, fade = on and fade or fade * 0.45 })
+    end
+    if (star or 0) > 0 then
+        local t = W("★" .. star, 18, INK, 2)
+        if t then draw_text_at(t, tx + 5 * DIFF_TILE + 4 * DIFF_GAP + 12, y + 15, fade) end
+    end
+end
+
 -- the left-column status chips — FLOW 1 (root) shows one combined strip,
 -- FLOW 2/5 (inside a folder) stack ★ · courses / TIER / SORT
 local function draw_chips(st, x, fade)
@@ -579,9 +622,12 @@ local function draw_chips(st, x, fade)
         return 1
     end
 
-    local head
-    if #parts == 0 then head = "ANY CHART" else head = table.concat(parts, " · ") end
-    draw_chip(x, 280, head, NIJI_CHART, fade)
+    -- the CHART chip: the difficulty SET as inline icons, never words. The ★,
+    -- when one is set, rides along as a compact "★N" (see draw_chart_chip).
+    -- The ROOT branch above is deliberately left alone: its single strip is a
+    -- "filter/sort says so" summary for a list that is never filtered, and it
+    -- keeps its words.
+    draw_chart_chip(x, 280, st.diff, st.star, fade)
     draw_chip(x, 318, "TIER: " .. tier_disp, NIJI_TIER, fade)
     draw_chip(x, 356, "SORT: " .. sort_disp, NIJI_SORT, fade)
     return 3
@@ -846,13 +892,12 @@ local function draw_filter_dialog(model, st, fade)
     if entry_focus and cur == 4 then dlg_rim(conf_x, conf_y, conf_w, conf_h, fade) end
 end
 
--- footer control hints (the FLOW 1 / FLOW 5 guides)
-local function draw_footer(fade)
-    fill_rect(LX, 1014, 210, 34, { 242, 244, 248 }, 235 * fade)
-    draw_text_box("SELECT   ← →", 22, { 42, 49, 66 }, INK, 2, LX, 1014, 210, 34, fade)
-    fill_rect(1143, 1014, 210, 34, { 242, 244, 248 }, 235 * fade)
-    draw_text_box("DECIDE   DON", 22, { 42, 49, 66 }, INK, 2, 1143, 1014, 210, 34, fade)
-end
+-- NO footer control hints. FLOW 1 / FLOW 5 carried two grey pills here -- a
+-- left "SELECT   ← →" and a right "DECIDE   DON" -- and they were the ONLY
+-- SELECT/DECIDE on this screen (see the note at the end of M.draw). Joseph:
+-- "select and decide are still visible at the bottom. we should remove those
+-- hints." They are gone; the wheel's own control guide is untouched (this
+-- function was pro-only).
 
 -- -------------------------------------------------------------------- draw
 function M.draw(self, model)
@@ -971,7 +1016,13 @@ function M.draw(self, model)
         draw_cursor_caps(CARD_X, cursor_top, 1.0)
     end
 
-    draw_footer(1.0)
+    -- No control-hint footer (removed at Joseph's request). The SELECT/DECIDE
+    -- pills that used to sit at y 1014 lived HERE, in this pro-only draw -- not in
+    -- the wheel's `SongSelect:draw_overlays`, which this screen never calls
+    -- (ProSongSelectScreen::draw runs script->draw_pro and returns; song_select.cpp
+    -- calls draw_overlays only from SongSelectScreen::draw). The wheel's own
+    -- guide_labels are therefore inert on pro by construction, and its hints stay
+    -- exactly as they were on the wheel.
     if st.filter_open then draw_filter_dialog(model, st, 1.0) end
     return true
 end
