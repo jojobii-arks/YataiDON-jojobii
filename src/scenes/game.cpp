@@ -254,7 +254,13 @@ std::optional<Screens> GameScreen::global_keys() {
     if (check_key_pressed(global_data.config->keys.back_key)) {
         if (song_music.has_value())
             audio.stop_sound(song_music.value());
-        return on_screen_end(Screens::SONG_SELECT);
+        // returns-after-song: honour the screen the play was committed from (pro
+        // select, or any future origin); -1 keeps the wheel's own target. Same
+        // rule RESULT and practice already follow.
+        const int origin = global_data.session_data[(int)global_data.player_num].origin_screen;
+        const Screens back_to = origin >= 0 ? (Screens)origin : Screens::SONG_SELECT;
+        spdlog::info("game: back key -> {} (origin_screen {})", back_to, origin);
+        return on_screen_end(back_to);
     }
 
     if (check_key_pressed(global_data.config->keys.pause_key))

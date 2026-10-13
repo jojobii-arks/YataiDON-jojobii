@@ -27,6 +27,24 @@ public:
 
     void on_screen_start() override {
         Screen::on_screen_start();
+        // This screen object outlives a visit (the screens table is built once at
+        // startup), so every field that tracks a single visit must be reset here
+        // -- the wheel does the same in SongSelectScreen::on_screen_start. Without
+        // this, a Transition left over from the previous play is still in
+        // game_transition and already finished, so the first update() after
+        // re-entry fired on_screen_end(get_game_screen_target()) immediately:
+        // re-entering pro select from the main menu jumped straight back into the
+        // selected song (or, after ESC in practice, straight back into practice
+        // from bar 1, which read as "practice just reloaded the scene").
+        if (search_box.has_value()) set_keyboard_visible(false);
+        search_box.reset();
+        game_transition.reset();
+        dan_transition.reset();
+        game_target_ = Screens::GAME;
+        state_ = UiState::BROWSING;
+        last_moved_ = -1e9;
+        search_guard_until_ = 0.0;
+        clear_input_buffers();
         SongBox::reset_bgm_slot();
         audio.play_sound("bgm", VolumePreset::MUSIC);
         script = std::make_unique<SongSelectScript>();
@@ -52,7 +70,7 @@ public:
             model->reset_root();
             spdlog::info("[pro] library ready at entry; root rows: {}", model->row_count());
         }
-        spdlog::info("pro_select: entered (v2)");
+        spdlog::info("pro_select: entered (v2) - transient state reset (transition cleared, state BROWSING)");
     }
 
     Screens on_screen_end(Screens next_screen) override {
