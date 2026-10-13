@@ -7,12 +7,18 @@ DanTransition::DanTransition(int base_id) : base_id(base_id) {
 }
 
 void DanTransition::start() {
+    // Only the curtain itself (base_id + 0) is required. The Don, emblem and
+    // flash are OPTIONAL: a skin may ship a partial animation set (the Nijiiro
+    // ships just the song_select half of the shutter rig) and get_animation()
+    // THROWS for an absent id — which used to take the whole screen down before
+    // the optional check below could run. Absent ids resolve to nullptr and the
+    // check drops every group whose textures/animations are missing.
     slide_in = dynamic_cast<MoveAnimation*>(tex.get_animation(base_id + 0));
     if (!slide_in) throw std::runtime_error("DanTransition: animation base_id is not a MoveAnimation");
-    don_rise = dynamic_cast<MoveAnimation*>(tex.get_animation(base_id + 1));
-    emblem_fade = dynamic_cast<FadeAnimation*>(tex.get_animation(base_id + 2));
-    emblem_spin = dynamic_cast<MoveAnimation*>(tex.get_animation(base_id + 3));
-    flash = dynamic_cast<FadeAnimation*>(tex.get_animation(base_id + 4));
+    don_rise    = tex.has_animation(base_id + 1) ? dynamic_cast<MoveAnimation*>(tex.get_animation(base_id + 1)) : nullptr;
+    emblem_fade = tex.has_animation(base_id + 2) ? dynamic_cast<FadeAnimation*>(tex.get_animation(base_id + 2)) : nullptr;
+    emblem_spin = tex.has_animation(base_id + 3) ? dynamic_cast<MoveAnimation*>(tex.get_animation(base_id + 3)) : nullptr;
+    flash       = tex.has_animation(base_id + 4) ? dynamic_cast<FadeAnimation*>(tex.get_animation(base_id + 4)) : nullptr;
     // the Don, emblem and flash are optional: skins with only a curtain still work
     if (!tex.has_texture("dan_transition/flash") || !don_rise || !emblem_fade || !emblem_spin || !flash)
         don_rise = emblem_spin = nullptr, emblem_fade = flash = nullptr;

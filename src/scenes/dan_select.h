@@ -193,6 +193,9 @@ private:
 
     std::optional<Screens> tick_timer(double current_ms);
     std::optional<Screens> start_dan_transition();
+    // Where the dojo's own exit lands: the pro when it routed here, the wheel
+    // otherwise (the wheel leaves origin_screen unset / -1).
+    Screens dan_exit_screen();
     void open_confirm(double current_ms);
 
     void handle_input_browsing(double current_ms);

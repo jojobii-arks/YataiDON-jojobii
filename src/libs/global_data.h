@@ -184,6 +184,9 @@ struct SessionData {
     fs::path selected_song;
     std::string song_hash;
     fs::path selected_dan_folder;
+    // Pro select (2026-10-13): the dan course (its dan.json path) the pro routed
+    // into the dojo, consumed once by DanNavigator::publish to open focused.
+    std::string dan_focus_path;
     std::vector<DanSongEntry> selected_dan;
     std::vector<Exam> selected_dan_exam;
     int dan_color = 0;

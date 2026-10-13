@@ -18,6 +18,47 @@ static constexpr int kUraCourse = 4;
 static constexpr int kRowsPerPair = 8;   // 8 charts + BACK + FILTER = the settled 10-row cycle
 
 namespace {
+
+// The pro's dan reader (LIGHT): display data straight out of the dan.json —
+// the same fields the dojo's DanNavigator reads, minus the song-path
+// resolution (the dojo resolves those when a course actually starts).
+std::shared_ptr<ProListModel::DanLite> load_dan_lite_impl(const fs::path& json_path,
+                                                          const std::string& era) {
+    rapidjson::Document doc = read_json_file(json_path);
+    if (!doc.IsObject() || !doc.HasMember("title") || !doc["title"].IsString()) return nullptr;
+    auto d = std::make_shared<ProListModel::DanLite>();
+    d->title = doc["title"].GetString();
+    d->era = era;
+    d->json_path = json_path;
+    if (doc.HasMember("color") && doc["color"].IsInt()) d->color = doc["color"].GetInt();
+    if (doc.HasMember("rank_art") && doc["rank_art"].IsInt()) d->rank_art = doc["rank_art"].GetInt();
+    if (doc.HasMember("gaiden") && doc["gaiden"].IsBool()) d->gaiden = doc["gaiden"].GetBool();
+    if (doc.HasMember("charts") && doc["charts"].IsArray()) {
+        for (auto& c : doc["charts"].GetArray()) {
+            ProListModel::DanSong s;
+            if (c.HasMember("title") && c["title"].IsString()) s.title = c["title"].GetString();
+            if (c.HasMember("subtitle") && c["subtitle"].IsString()) s.subtitle = c["subtitle"].GetString();
+            if (c.HasMember("difficulty") && c["difficulty"].IsInt()) s.difficulty = c["difficulty"].GetInt();
+            if (c.HasMember("hidden") && c["hidden"].IsBool()) s.hidden = c["hidden"].GetBool();
+            d->songs.push_back(std::move(s));
+        }
+    }
+    if (d->songs.empty()) return nullptr;
+    if (doc.HasMember("exams") && doc["exams"].IsArray()) {
+        for (auto& e : doc["exams"].GetArray()) {
+            ProListModel::DanExam x;
+            if (e.HasMember("type") && e["type"].IsString()) x.type = e["type"].GetString();
+            if (e.HasMember("range") && e["range"].IsString()) x.range = e["range"].GetString();
+            if (e.HasMember("value") && e["value"].IsArray() && e["value"].Size() >= 2) {
+                const auto& v = e["value"];
+                if (v[0].IsInt()) x.v1 = v[0].GetInt();
+                if (v[1].IsInt()) x.v2 = v[1].GetInt();
+            }
+            d->exams.push_back(std::move(x));
+        }
+    }
+    return d;
+}
 std::string lower_ascii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return (char)std::tolower(c); });
@@ -142,6 +183,7 @@ void ProListModel::open_folder_row(int row_index) {
     clear_swap();
     switch (r.kind) {
         case RowKind::FOLDER:   context_ = Context::FOLDER;   folder_path_ = r.folder_path; break;
+        case RowKind::DAN_FOLDER: context_ = Context::FOLDER; folder_path_ = r.folder_path; break;
         case RowKind::RECENT:   context_ = Context::RECENT;   folder_path_.clear(); break;
         case RowKind::FAVORITE: context_ = Context::FAVORITE; folder_path_.clear(); break;
         case RowKind::ALL:      context_ = Context::ALL;      folder_path_.clear(); break;
@@ -197,6 +239,16 @@ void ProListModel::begin_build() {
     cand_.clear();
     build_pos_ = 0;
     cursor_ = 0;                 // a new context starts at the top row (not the last cursor)
+    dan_context_ = false;
+    // The Dan Dojo folders open STRAIGHT into dan rows (set folders and the
+    // courses themselves): no song collection, no filter, no sort — the dan
+    // world rides outside all of it, exactly as the wheel's does.
+    if (context_ == Context::FOLDER && folder_has_dan_content(folder_path_)) {
+        build_dan_rows();
+        building_ = false;
+        phase_ = Phase::IDLE;
+        return;
+    }
     collect_context_songs();
 
     if (context_ == Context::ROOT) {
@@ -400,6 +452,104 @@ void ProListModel::assemble_rows() {
     if (cursor_ < 0 || cursor_ >= (int)rows_.size()) cursor_ = 0;
 }
 
+bool ProListModel::folder_has_dan_content(const fs::path& folder) const {
+    std::error_code ec;
+    if (!fs::is_directory(folder, ec)) return false;
+    std::vector<fs::path> jsons;
+    collect_dan_jsons_under(folder, 2, jsons);
+    return !jsons.empty();
+}
+
+void ProListModel::collect_dan_jsons_under(const fs::path& dir, int depth,
+                                           std::vector<fs::path>& out) {
+    std::error_code ec;
+    // The dir's OWN course counts (a leaf like "0 Shokyuu" holds its dan.json
+    // directly), then the tree below it (an era holds its courses one level down).
+    if (fs::exists(dir / "dan.json", ec)) out.push_back(dir / "dan.json");
+    if (depth <= 0) return;
+    for (const fs::directory_entry& e : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        std::error_code dec;
+        if (e.is_directory(dec)) collect_dan_jsons_under(e.path(), depth - 1, out);
+    }
+}
+
+// The Dan Dojo tree, one level at a time, matching the wheel's shape: the open
+// folder lists its SET folders (eras — rows with a box.def) and any courses
+// that sit directly under it ("0 Shokyuu"), a set folder lists its courses.
+// No filter, no sort, no periodic FILTER row: one trailing BACK is the only
+// boilerplate. The kurses keep the dojo's own order (leading number, then name).
+void ProListModel::build_dan_rows() {
+    rows_.clear();
+    cursor_ = 0;
+    dan_context_ = true;
+
+    auto load_one = [&](const fs::path& json_path, const std::string& era)
+            -> std::shared_ptr<const DanLite> {
+        std::shared_ptr<DanLite> d = load_dan_lite_impl(json_path, era);
+        if (d) {
+            auto rec = scores_manager.get_dan_record(get_player_id(global_data.player_num), d->title);
+            if (rec && rec->rank > 0) d->earned = rec->rank;
+        }
+        return d;
+    };
+
+    auto dan_order = [](const fs::path& a, const fs::path& b) {
+        auto key = [](const fs::path& p) {
+            const std::string name = p.parent_path().filename().string();
+            size_t i = 0;
+            while (i < name.size() && std::isdigit((unsigned char)name[i])) i++;
+            int num = 1000000;
+            if (i > 0) { try { num = std::stoi(name.substr(0, i)); } catch (...) {} }
+            return std::make_pair(num, name);
+        };
+        return key(a) < key(b);
+    };
+
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(folder_path_, ec)) {
+        if (ec) break;
+        std::error_code dec;
+        if (!e.is_directory(dec)) continue;
+        const fs::path dir = e.path();
+        std::vector<fs::path> jsons;
+        collect_dan_jsons_under(dir, 2, jsons);
+        if (jsons.empty()) continue;
+        std::sort(jsons.begin(), jsons.end(), dan_order);
+
+        const BoxDef def = nav_->library_has_def_file(dir) ? nav_->parse_box_def(dir) : BoxDef{};
+        std::error_code lec;
+        const bool own_json = fs::exists(dir / "dan.json", lec);
+        bool is_set = nav_->library_has_def_file(dir) || !own_json;
+        if (is_set) {
+            // A set (an era, or an unboxed group): one DAN_FOLDER row; its
+            // courses open on the next level. The name prefers the box's title.
+            Row r;
+            r.kind = RowKind::DAN_FOLDER;
+            r.name = def.name.empty() ? dir.filename().string() : def.name;
+            r.folder_path = dir;
+            r.genre_index = (int)def.genre_index;
+            r.dan_count = (int)jsons.size();
+            rows_.push_back(std::move(r));
+        } else {
+            // A leaf course sitting directly under the open folder.
+            if (auto d = load_one(dir / "dan.json", dir.filename().string())) {
+                Row r;
+                r.kind = RowKind::DAN;
+                r.name = d->title;
+                r.dan = d;
+                rows_.push_back(std::move(r));
+            }
+        }
+    }
+
+    Row back;
+    back.kind = RowKind::BACK;
+    rows_.push_back(std::move(back));
+    spdlog::info("[pro] dan rows: {} entries under '{}'",
+                 (int)rows_.size() - 1, folder_path_.string());
+}
+
 void ProListModel::build_root_rows() {
     rows_.clear();
     cursor_ = 0;
@@ -526,6 +676,11 @@ const char* ProListModel::sort_name() const {
 }
 
 int ProListModel::chart_row_count() const {
+    if (dan_context_) {
+        int n = 0;
+        for (const Row& r : rows_) if (r.kind == RowKind::DAN) ++n;
+        return n;
+    }
     int n = 0;
     for (const Row& r : rows_) {
         if (r.kind == RowKind::CHART) ++n;

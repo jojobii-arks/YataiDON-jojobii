@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -37,6 +38,8 @@ public:
         CHART,     // one chart = one row; song_path + course + level
         BACK,      // the periodic BACK row inside a folder
         FILTER,    // the periodic FILTER row (opens the Filter/Sort dialog)
+        DAN_FOLDER,// a dan set (era) row inside the Dan Dojo tree
+        DAN,       // one dan course (a dan.json) — opens the dojo focused
     };
 
     // The sort values, in the dialog's cell order: SCORE, CROWN, A-Z, LEVEL.
@@ -57,6 +60,22 @@ public:
         std::string tier;      // "" = ALL, "NONE", else a tier letter
     };
 
+    // A dan course, parsed light for DISPLAY only: title / era / color /
+    // rank art / exams / the song list exactly as the dan.json carries it.
+    // (The dojo's DanNavigator still resolves the real song paths when a
+    // course actually starts.) `earned` is the player's dan record rank.
+    struct DanSong { std::string title, subtitle; int difficulty = 0; bool hidden = false; };
+    struct DanExam { std::string type, range; int v1 = 0, v2 = 0; };
+    struct DanLite {
+        std::string title, era;
+        int color = 0, rank_art = -1;
+        bool gaiden = false;
+        int earned = -1;
+        std::filesystem::path json_path;
+        std::vector<DanSong> songs;
+        std::vector<DanExam> exams;
+    };
+
     struct Row {
         RowKind kind = RowKind::CHART;
         // Folder / collection rows.
@@ -73,6 +92,9 @@ public:
         bool played = false;
         int score = 0, crown = 0;
         int tier_rank = 0;                // ladder rank, 0 = tier-less
+        // Dan rows: the parsed course (DAN) / the count of courses (DAN_FOLDER).
+        std::shared_ptr<const DanLite> dan;
+        int dan_count = 0;
     };
 
     // Everything the details panel / a drawn card needs for one chart row,
@@ -135,8 +157,19 @@ public:
     void filter_changed();                // star changed -> tier clamp lives in the dialog UI
     const char* sort_name() const;
 
-    // Chart rows currently in the list (the filtered count the pill shows).
+    // Chart rows currently in the list (the filtered count the pill shows);
+    // in a dan context it counts the DAN rows so the pill stays truthful.
     int chart_row_count() const;
+
+    // ---- dan rows --------------------------------------------------------
+    // True while the open context is a Dan Dojo folder: filters and sort are
+    // OFF there (the dan world rides outside them, exactly as the wheel's does).
+    bool dan_context() const { return dan_context_; }
+    // The parsed dan behind a DAN row (nullptr for every other kind).
+    const DanLite* row_dan(int row_index) const {
+        if (row_index < 0 || row_index >= (int)rows_.size()) return nullptr;
+        return rows_[row_index].dan.get();
+    }
 
     // ---- resolved per-row info ---------------------------------------
     ChartInfo resolve(int row_index) const;         // row as stored
@@ -179,6 +212,7 @@ public:
     // ---- Filter/Sort dialog (TAB / the filter card row) ----------------
     bool filter_open() const { return filter_open_; }
     void open_filter() {
+        if (dan_context_) return;   // filters are off in the dan folders
         filter_open_ = true;
         filter_cursor_ = kEntryDiff;
         filter_focus_ = FilterFocus::ENTRY;
@@ -286,8 +320,13 @@ private:
     bool branch_flag(const std::filesystem::path& song_path, int course) const;
     void build_root_rows();
     void assemble_rows();
+    bool folder_has_dan_content(const std::filesystem::path& folder) const;
+    void build_dan_rows();
+    static void collect_dan_jsons_under(const std::filesystem::path& dir, int depth,
+                                        std::vector<std::filesystem::path>& out);
 
     bool hide_dan_ = false;
+    bool dan_context_ = false;   // the open context is a Dan Dojo folder
 
     // ---- chunked build state ------------------------------------------
     bool building_ = false;

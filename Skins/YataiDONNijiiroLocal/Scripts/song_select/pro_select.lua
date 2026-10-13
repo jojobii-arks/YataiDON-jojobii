@@ -618,12 +618,41 @@ end
 -- one root folder / collection card — FLOW 1: band + ONE plate + the name
 local function draw_folder_card(ids, row, x, y, fade)
     local frame
-    if row.kind == "folder" then frame = REF[row.genre_index] or 0
+    if row.kind == "folder" or row.kind == "danfolder" then frame = REF[row.genre_index] or 0
     else frame = COLLECTION_FRAME[row.kind] or 0 end
     card_base(BAND[frame] or BAND[0], x, y, fade)
     one_plate(x, y, fade, panel_of(BAND[frame] or BAND[0]))
     local stroke = RIM[frame] or RIM[0]
     draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_IN / 2, fade, 1300)
+    -- a dan set (era) card also says how many courses live under it
+    if row.kind == "danfolder" and (row.dan_count or 0) > 0 then
+        local t = W(tostring(row.dan_count) .. " COURSES", 20, stroke, 3)
+        if t then draw_text_at(t, x + CARD_W - 30 - t.width, y + CARD_IN / 2, fade) end
+    end
+end
+
+-- A DAN course card (2026-10-13, Joseph: "use our pro rounded card language"):
+-- the same rounded two-tone language as everything else, coloured by the
+-- course's own dan color, one plate. The course title rides left; the era and
+-- the song count right. The exams and the song list (with the dojo's ???
+-- reveal) live in the details panel. Dan rows never show tier/star/level:
+-- the dan world rides outside the filters entirely, exactly as the wheel's does.
+local function draw_dan_card(ids, model, off, row, x, y, fade)
+    local d = model:dan(off)
+    local frame = (d and BAND[d.color]) and d.color or 0
+    local band = BAND[frame] or BAND[0]
+    card_base(band, x, y, fade)
+    one_plate(x, y, fade, panel_of(band))
+    local stroke = RIM[frame] or RIM[0]
+    local cy = y + CARD_IN / 2
+    draw_text_at(W(row.name or "", 30, stroke, 5), x + 30, cy, fade, 900)
+    local era = (d and d.era) or ""
+    local n = row.dan_songs or 0
+    local right = (era ~= "" and era or "") .. (n > 0 and ((era ~= "" and "  ·  " or "") .. n .. " SONGS") or "")
+    if right ~= "" then
+        local t = W(right, 20, stroke, 3)
+        if t then draw_text_at(t, x + CARD_W - 30 - t.width, cy, fade) end
+    end
 end
 
 -- BACK / FILTER-SORT pair rows — FLOW 2: band + ONE plate, icon at 33, label at 83
@@ -821,6 +850,13 @@ local function draw_chips(st, x, fade)
     local tier_disp = (st.tier == "" or st.tier == nil) and "ALL"
                    or (st.tier == "NONE" and "NONE" or st.tier)
 
+    if st.dan_context then
+        -- the dan world rides outside the filter/sort system (the wheel's way):
+        -- one chip says so and nothing else on this row applies
+        draw_chip(x, 280, "DAN DOJO · FILTERS OFF", NIJI_CHART, fade)
+        return 1
+    end
+
     if st.context == "root" then
         -- filter and sort never touch the root list — one chip says so
         local txt
@@ -914,6 +950,34 @@ local function draw_details(ids, model, st, x, y, fade)
         else
             placeholder(tx, y + 220, 230, 34, fade)
             draw_text_at(W("NO SCORE", 20, stroke, 2), tx + 244, y + 237, fade)
+        end
+    elseif row and row.kind == "dan" then
+        local d = model:dan(0)
+        draw_text_at(W((d and d.gaiden) and "DAN DOJO — GAIDEN" or "DAN DOJO", 16, stroke, 2), tx, y + 30, fade)
+        draw_text_at(W((d and d.title) or row.name or "", 24, stroke, 3), tx, y + 62, fade, 332)
+        draw_text_at(W((d and d.era) or "", 16, stroke, 2), tx, y + 90, fade, 332)
+        fill_rect(tx, y + 112, 332, 2, rgba(band, 170), 255 * fade)
+        local ey = y + 122
+        if d and d.exams then
+            for i = 1, math.min(2, #d.exams) do
+                local e = d.exams[i]
+                local lbl = (e.type == "gauge" and "GAUGE" or (e.type == "hit" and "HIT" or string.upper(e.type or "")))
+                local sign = (e.range == "less") and "≤" or "≥"
+                draw_text_at(W(lbl, 15, stroke, 2), tx, ey + (i - 1) * 22, fade, 332)
+                draw_text_at(W(sign .. " " .. (e.v1 or 0) .. " / " .. (e.v2 or 0), 15, stroke, 2),
+                             tx + 90, ey + (i - 1) * 22, fade, 240)
+            end
+        end
+        if d and (d.earned or -1) >= 0 then
+            draw_text_at(T("CLEARED", 15, GOLD, INK, 2), tx, ey + 50, fade)
+        end
+        fill_rect(tx, y + 196, 332, 2, rgba(band, 170), 255 * fade)
+        if d and d.songs then
+            for i = 1, math.min(5, #d.songs) do
+                local s = d.songs[i]
+                local shown = (s.hidden and (d.earned or -1) < 0) and "？？？" or (s.title or "")
+                draw_text_at(W(tostring(i) .. ". " .. shown, 16, stroke, 2), tx, y + 212 + (i - 1) * 20, fade, 332)
+            end
         end
     else
         draw_text_at(W("FOLDER", 16, stroke, 2), tx, y + 30, fade)
@@ -1192,8 +1256,15 @@ function M.draw(self, model)
     else
         bg_frame = REF[st.genre_index or 0] or 0
     end
+    -- The backdrop is a per-genre framed texture. It reloads with fewer frames
+    -- after a screen round trip (seen leaving + re-entering via the Dan Dojo),
+    -- and a bad frame index used to abort this whole draw -- the list, header
+    -- and panel all died with it. Draw it defensively: wanted frame, then the
+    -- base frame, then a plain fill, so the backdrop can never take the screen.
     if ids.background then
-        tex.draw_texture(ids.background, { frame = bg_frame, x = 0, y = 0 })
+        local ok = pcall(tex.draw_texture, ids.background, { frame = bg_frame, x = 0, y = 0 })
+        if not ok then ok = pcall(tex.draw_texture, ids.background, { frame = 0, x = 0, y = 0 }) end
+        if not ok then fill_rgb(0, 0, 1920, 1080, 40, 40, 44, 255) end
     else
         fill_rgb(0, 0, 1920, 1080, 40, 40, 44, 255)
     end
@@ -1253,8 +1324,10 @@ function M.draw(self, model)
                 local cmask = (off == 0 and sec_h > 0.5)
                               and { tl = true, tr = true, bl = false, br = false } or nil
                 if info then draw_chart_card(ids, info, x, y, 1.0, cmask) end
-            elseif row.kind == "folder" or row.kind == "search" or row.kind == "recent"
-                or row.kind == "favorite" or row.kind == "all" then
+            elseif row.kind == "dan" then
+                draw_dan_card(ids, model, off, row, x, y, 1.0)
+            elseif row.kind == "folder" or row.kind == "danfolder" or row.kind == "search"
+                or row.kind == "recent" or row.kind == "favorite" or row.kind == "all" then
                 draw_folder_card(ids, row, x, y, 1.0)
             else
                 draw_pair_card(ids, row.kind, x, y, 1.0)

@@ -27,6 +27,8 @@ const char* row_kind_name(ProListModel::RowKind k) {
         case ProListModel::RowKind::CHART:    return "chart";
         case ProListModel::RowKind::BACK:     return "back";
         case ProListModel::RowKind::FILTER:   return "filter";
+        case ProListModel::RowKind::DAN_FOLDER: return "danfolder";
+        case ProListModel::RowKind::DAN:      return "dan";
     }
     return "chart";
 }
@@ -84,6 +86,7 @@ void register_pro_lua_bindings(sol::state& lua) {
             t["filter_focus"] = std::string(m.filter_focus_name());   // "entry" | "group"
             t["filter_value"] = m.filter_value_cursor();              // GROUP: value index
             t["active_course"] = m.active_course();
+            t["dan_context"]  = m.dan_context();
             t["picker_open"]  = m.picker_open();
             t["picker"]       = m.picker_cursor();
             return t;
@@ -106,6 +109,17 @@ void register_pro_lua_bindings(sol::state& lua) {
             t["genre_index"] = r.genre_index;
             t["count"]      = r.chart_count;
             t["played"]     = r.played;
+            if (r.kind == ProListModel::RowKind::DAN_FOLDER || r.kind == ProListModel::RowKind::DAN) {
+                t["dan_count"] = r.dan_count;
+                if (r.dan) {
+                    t["dan_color"]     = r.dan->color;
+                    t["dan_rank_art"]  = r.dan->rank_art;
+                    t["dan_era"]       = r.dan->era;
+                    t["dan_songs"]     = (int)r.dan->songs.size();
+                    t["dan_earned"]    = r.dan->earned;
+                    t["dan_gaiden"]    = r.dan->gaiden;
+                }
+            }
             return t;
         },
         // Resolved chart info for a row (honours the CHANGE DIFF swap) — the
@@ -132,6 +146,47 @@ void register_pro_lua_bindings(sol::state& lua) {
             const std::vector<std::string>& set = ProListModel::ladder_hard_to_blank();
             sol::table t = l.create_table((int)set.size(), 0);
             for (size_t i = 0; i < set.size(); i++) t[(int)i + 1] = set[i];
+            return t;
+        },
+        // One dan row's full display data — the details panel for a course:
+        // title / era / color / rank art / exams / the song list (with each
+        // entry's hidden flag, so the panel can mirror the dojo's ???) /
+        // the player's earned rank.
+        "dan", [](ProListModel& m, double offset) -> sol::object {
+            sol::state& l = *script_manager.lua;
+            const int n = m.row_count();
+            if (n == 0) return sol::lua_nil;
+            const int idx = wrap_index(m.cursor() + (int)offset, n);
+            const ProListModel::DanLite* d = m.row_dan(idx);
+            if (!d) return sol::lua_nil;
+            sol::table t = l.create_table();
+            t["title"]      = d->title;
+            t["era"]        = d->era;
+            t["color"]      = d->color;
+            t["rank_art"]   = d->rank_art;
+            t["gaiden"]     = d->gaiden;
+            t["earned"]     = d->earned;
+            t["focus_path"] = d->json_path.string();
+            sol::table songs = l.create_table((int)d->songs.size(), 0);
+            for (size_t i = 0; i < d->songs.size(); ++i) {
+                sol::table s = l.create_table();
+                s["title"]      = d->songs[i].title;
+                s["subtitle"]   = d->songs[i].subtitle;
+                s["difficulty"] = d->songs[i].difficulty;
+                s["hidden"]     = d->songs[i].hidden;
+                songs[(int)i + 1] = s;
+            }
+            t["songs"] = songs;
+            sol::table exams = l.create_table((int)d->exams.size(), 0);
+            for (size_t i = 0; i < d->exams.size(); ++i) {
+                sol::table x = l.create_table();
+                x["type"]  = d->exams[i].type;
+                x["range"] = d->exams[i].range;
+                x["v1"]    = d->exams[i].v1;
+                x["v2"]    = d->exams[i].v2;
+                exams[(int)i + 1] = x;
+            }
+            t["exams"] = exams;
             return t;
         },
         // The CHANGE DIFF picker: one cell per course, mark / level / tier.

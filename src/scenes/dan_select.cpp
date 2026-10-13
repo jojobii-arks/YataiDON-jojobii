@@ -386,6 +386,21 @@ void DanNavigator::publish(std::vector<DanBoxData>&& data) {
 
     if (boxes.empty()) { spdlog::warn("DanNavigator: no dan courses found"); return; }
 
+    // Pro select handoff: open focused on the course the pro chose. The wheel
+    // leaves the field empty, so its ribbon starts at index 0 exactly as before.
+    {
+        SessionData& sd = global_data.session_data[(int)global_data.player_num];
+        if (!sd.dan_focus_path.empty()) {
+            const fs::path want(sd.dan_focus_path);
+            for (int i = 0; i < (int)boxes.size(); ++i) {
+                if (boxes[i]->path == want) { selected_index = i; break; }
+            }
+            spdlog::info("[dan] pro focus -> index {} of {} ('{}')",
+                         selected_index, (int)boxes.size(), sd.dan_focus_path);
+            sd.dan_focus_path.clear();
+        }
+    }
+
     set_positions(true, 0);
     boxes[selected_index]->expand_box();
     for (auto& b : boxes) b->fade_in(100);
@@ -785,11 +800,34 @@ void DanSelectScreen::open_confirm(double current_ms) {
     }
 }
 
+Screens DanSelectScreen::dan_exit_screen() {
+    // The pro routed here: its own exit lands back in pro select (and the
+    // marker is consumed). The wheel leaves origin_screen -1 => the wheel.
+    SessionData& sd = global_data.session_data[(int)global_data.player_num];
+    if (sd.origin_screen == (int)Screens::PRO_SELECT) {
+        sd.origin_screen = -1;
+        return Screens::PRO_SELECT;
+    }
+    return Screens::SONG_SELECT;
+}
+
 std::optional<Screens> DanSelectScreen::start_dan_transition() {
-    // skins without a dan_transition folder go straight back
-    if (!tex.has_texture("dan_transition/background")) return on_screen_end(Screens::SONG_SELECT);
+    // Skins without the dan_transition rig go straight back. Probe the
+    // ANIMATION set, not just the texture: the Nijiiro leaves the song_select
+    // half of the rig loaded (so a texture probe passes) while its dan_select
+    // animation set has no base_id 19 — and DanTransition::start() throws for
+    // that, which took the whole screen down on the way out of the dojo.
+    if (!tex.has_animation(19) || !tex.has_texture("dan_transition/background"))
+        return on_screen_end(dan_exit_screen());
     dan_transition.emplace(19);
-    dan_transition->start();
+    try {
+        dan_transition->start();
+    } catch (const std::exception& e) {
+        // a skin with a partial set: drop the curtain, leave anyway
+        spdlog::warn("dan transition skipped: {}", e.what());
+        dan_transition.reset();
+        return on_screen_end(dan_exit_screen());
+    }
     return std::nullopt;
 }
 
@@ -901,7 +939,7 @@ std::optional<Screens> DanSelectScreen::update() {
     if (chara) chara->update(current_ms);
     if (dan_transition.has_value()) {
         dan_transition->update(current_ms);
-        if (dan_transition->is_finished()) return on_screen_end(Screens::SONG_SELECT);
+        if (dan_transition->is_finished()) return on_screen_end(dan_exit_screen());
         return std::nullopt;
     }
     if (auto next = tick_timer(current_ms)) return next;

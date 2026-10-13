@@ -100,6 +100,17 @@ public:
         const double now = get_current_ms();
         if (player) player->update(now);   // Don-chan + nameplate animation
 
+        // The dan handoff (pro -> dojo), exactly the wheel's shape: the flash
+        // plays once, then the screen leaves for DAN_SELECT. Nothing else runs
+        // while it does.
+        if (state_ == UiState::DAN_SELECTING && !dan_transition.has_value())
+            return on_screen_end(Screens::DAN_SELECT);
+        if (dan_transition.has_value()) {
+            dan_transition->update(now);
+            if (dan_transition->is_finished()) return on_screen_end(Screens::DAN_SELECT);
+            return std::nullopt;
+        }
+
         if (!library_ready_ && navigator.song_files_ready.load()) {
             library_ready_ = true;
             begin_initial_context();
@@ -120,7 +131,8 @@ public:
                 model->close_filter();
                 state_ = UiState::BROWSING;
                 spdlog::info("[pro] filter dialog closed (tab)");
-            } else if (state_ == UiState::BROWSING && library_ready_ && !model->building()) {
+            } else if (state_ == UiState::BROWSING && library_ready_ && !model->building()
+                       && !model->dan_context()) {
                 model->open_filter();
                 state_ = UiState::FILTER;
                 spdlog::info("[pro] filter dialog opened (tab)");
@@ -180,10 +192,11 @@ public:
         if (player) player->draw(state, false, 1.0f);
         if (search_box.has_value()) search_box->draw();
         if (game_transition.has_value()) game_transition->draw();
+        if (dan_transition.has_value()) dan_transition->draw();
     }
 
 private:
-    enum class UiState { BROWSING, SELECTED, PICKER, OPTIONS, FILTER, SEARCH };
+    enum class UiState { BROWSING, SELECTED, PICKER, OPTIONS, FILTER, SEARCH, DAN_SELECTING };
 
     std::unique_ptr<ProListModel> model;
     ProPreview preview_;              // owns the "preview" stream, keyed on the song
@@ -467,6 +480,31 @@ private:
                 audio.play_sound("don", VolumePreset::SOUND);
                 start_search();
                 break;
+            case ProListModel::RowKind::DAN: {
+                // A dan course: hand off to the dojo, focused on this course,
+                // and have the dojo's own exit land back here.
+                audio.play_sound("don", VolumePreset::SOUND);
+                SessionData& sd = global_data.session_data[(int)global_data.player_num];
+                sd.origin_screen  = (int)Screens::PRO_SELECT;
+                sd.dan_focus_path = r.dan ? r.dan->json_path.string() : "";
+                spdlog::info("[pro] dan selected: '{}' -> dojo (focused)", r.name);
+                state_ = UiState::DAN_SELECTING;
+                // The curtain is the wheel's own rig (ROUND 17: anim 38 drives
+                // it; dan_doors.lua draws the shutters while the engine's quad
+                // stays invisible in this skin). Run it only when the skin
+                // ships one — the dojo's guard pattern — and never let a
+                // partial animation set take the screen down.
+                if (tex.has_texture("dan_transition/background")) {
+                    dan_transition.emplace();
+                    try {
+                        dan_transition->start();
+                    } catch (const std::exception& e) {
+                        spdlog::warn("[pro] dan curtain skipped: {}", e.what());
+                        dan_transition.reset();
+                    }
+                }
+                break;
+            }
             case ProListModel::RowKind::CHART:
                 audio.play_sound("don", VolumePreset::SOUND);
                 spdlog::info("[pro] chart selected: {} [{}/{}]", r.title, r.course, r.level);
