@@ -16,9 +16,9 @@
 --     6px seams, 14px inner padding.
 --   FOLDER / BACK / FILTER card: ONE plate (11,11,1374,62), name or an icon +
 --     label (icon at 33, label at 83) — FLOW 1's folder card, FLOW 2's pair.
--- The list fills the column: 10 slots, y 196..1032, the cursor PINNED at y 532
--- (its own slot, four rows above it and five below) with the list scrolling
--- under it — Joseph 2026-10-13: keep the pin, just show more rows.
+--   The list fills the column: 10 slots, y 196..1032, the cursor PINNED at y 532
+--     (its own slot, four rows above it and five below) with the list scrolling
+--     under it — Joseph 2026-10-13: keep the pin, just show more rows.
 --   SELECTED state: the cursor chart's card is NOT replaced. It stays in its slot
 --     and the five-entry DON section (BACK / SETTINGS / PLAY / PRACTICE / CHANGE
 --     DIFF — or the CHANGE DIFF picker while it is open) UNFOLDS as part of that
@@ -53,6 +53,7 @@ local CARD_GAP = 4
 local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
 local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
+local CURSOR_ROW = 4                         -- 5th slot: cursor row at y 532 (the pin)
 -- The window is ten slots now (Joseph 2026-10-13: use the whole vertical space,
 -- keep the cursor PINNED): y 196..1032 — four rows above the pinned cursor and five
 -- below. The pin is untouched; only the window grew.
@@ -514,9 +515,9 @@ local function draw_section_shell(band, x, y, fade)
     fill_rect(x, y, CARD_W, SUB_H, band, 255 * fade)
 end
 
--- The DON section's entries: five 262x60 BUTTONS at a 276 pitch, each a plate in the card's own LIGHT
-panel tone sitting on the section's dark band, so they read as buttons living
--- inside the card. Every label is white-filled with the genre's rim
+-- The DON section's entries: five 262x60 BUTTONS at a 276 pitch, each a plate in
+-- the card's own LIGHT panel tone sitting on the section's dark band, so they read
+-- as buttons living inside the card. Every label is white-filled with the genre's rim
 -- colour as the stroke — the skin's house style on a light board panel. The current
 -- button is marked by the screen's cursor clamp and NOT by a gold fill (a gold fill
 -- would read as an option that is ON, which nothing here is); the label keeps the
