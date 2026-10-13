@@ -53,11 +53,15 @@ local CARD_GAP = 4
 local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
 local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
-local CURSOR_ROW = 4                         -- 5th slot: cursor row at y 532 (the pin)
--- The window is ten slots now (Joseph 2026-10-13: use the whole vertical space,
--- keep the cursor PINNED): y 196..1032 — four rows above the pinned cursor and five
--- below. The pin is untouched; only the window grew.
-local MIN_OFF, MAX_OFF = -4, 5               -- 10 slots, y 196..1032
+local CURSOR_ROW = 4                         -- cursor row: pinned at y 532
+-- The window OVERDRAWS the screen now (Joseph 2026-10-13: "render more cards above
+-- and below so that it looks like an endless scroll"): slots run from y 28 well past
+-- the bottom edge, so the list crosses BOTH screen edges — a full card above the
+-- cursor's column, a part-card sliver at the very top, a part-card sliver at the
+-- bottom — and since row() / info() read with a WRAPPING offset by design (the
+-- carousel reading), the ribbon never shows a start or an end. The cursor stays
+-- PINNED at y 532 and the view still draws only the slots it paints.
+local MIN_OFF, MAX_OFF = -7, 7               -- 15 slots, y 28..1120 (overdraw past both edges)
 local SUB_H = 84                             -- the section's block: one CARD_H pitch
 local SUB_PLATE_H, SUB_TILE_H = 62, 60       -- its plate / tile heights (the strip's own)
 local LX = 48                                -- left column x
