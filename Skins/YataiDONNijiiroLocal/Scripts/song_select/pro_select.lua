@@ -404,13 +404,9 @@ end
 
 -- The cursor: the row's OWN rim turns cursor gold at 5px (SPEC 3, FLOW 2's
 -- selected card — its board ring at a 5px inset). No halo, no gap change.
-local function draw_cursor_rim(x, y, fade)
-    local a = 255 * fade
-    fill_rgb(x, y, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x, y + CARD_IN - CURSOR_T, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x, y, CURSOR_T, CARD_IN, GOLD[1], GOLD[2], GOLD[3], a)
-    fill_rgb(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_IN, GOLD[1], GOLD[2], GOLD[3], a)
-end
+-- The cursor row's gold rim is GONE (Joseph 2026-10-13: "remove the yellow border
+-- of the selected chart — the C clamp is the main indicator"). Every cursor row,
+-- selected or not, is marked by the clamp alone.
 
 -- The cursor caps on the list's card: the same clamp as everywhere else, at the
 -- card's own design numbers — the board is 1428x100 over a 1396x84 card, so the
@@ -418,9 +414,10 @@ end
 -- past the card top and bottom (100 tall). The design's 13px outer-corner radius
 -- is NOT drawn: the engine exposes no rounded variant of the fill path, so the
 -- brackets are straight-edged.
-local function draw_cursor_caps(x, y, fade)
-    clamp_cap(x, y, CARD_IN, true, fade, CLAMP_ARM_MAX, 5, 13)
-    clamp_cap(x + CARD_W, y, CARD_IN, false, fade, CLAMP_ARM_MAX, 5, 13)
+local function draw_cursor_caps(x, y, fade, ov)
+    ov = ov or 5
+    clamp_cap(x, y, CARD_IN, true, fade, CLAMP_ARM_MAX, ov, 13)
+    clamp_cap(x + CARD_W, y, CARD_IN, false, fade, CLAMP_ARM_MAX, ov, 13)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
@@ -502,27 +499,33 @@ local function draw_pair_card(ids, kind, x, y, fade)
     draw_text_at(W(label, 30, INK, 5), x + 83, cy, fade, 800)
 end
 
--- The DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
--- Colours and stations off the Penpot strip render: the plate is the dialog's
--- TAN_D and every tile is TAN (the old ink plate + TAN_D tiles sat a step too
--- dark, so the strip read as a row of chocolate buttons). This strip is no longer
--- drawn in the selected card's own slot — it is its own panel BELOW that card (see
--- draw_pro) — so the current tile is marked with the screen's cursor clamp and NOT
--- with a gold fill: with the strip standing alone a gold tile would read as an
--- option that is ON, which nothing here is. The label keeps the size/thickness
--- step that says which entry the cursor is on, and the clamp is drawn AFTER the
--- row (its ink sits 3px proud of the tile, which the next tile must not paint
--- over). BACK / SETTINGS / CHANGE DIFF carry their real badge art — a 32x32 mark
--- on the centre the flat square used to occupy — and their labels centre at the
--- design's tx+138, not the tile centre: an icon tile pushes its label ~7px right
--- (PLAY and PRACTICE, which have no icon, centre on the tile at tx+131).
-local function draw_controls(ids, st, x, y, fade)
-    local cy = y + 11 + 30                     -- the tile row's own centre (not the card's)
-    fill_rect(x + 11, y + 4, 1374, 74, TAN_D, 255 * fade)
+-- The selected card's own section, unfolding beneath it: the SAME two tones as the
+-- card (genre band frame, band's light panel inside) and no gap between the card
+-- and the section, so card + section read as one piece (Joseph 2026-10-13). The
+-- rows below the cursor are pushed down by CARD_IN in draw_pro to open the room.
+local function draw_section_shell(band, x, y, fade)
+    fill_rect(x, y, CARD_W, CARD_IN, band, 255 * fade)
+    fill_rect(x + 11, y + 11, 1374, PLATE_H, panel_of(band), 255 * fade)
+end
+
+-- The DON section's entries: five 262x58 tiles at a 276 pitch. Each tile is a soft
+-- wash of the section's own band over its light panel, so the tiles read as tiles
+-- without a second palette, and every label is white-filled with the genre's rim
+-- colour as the stroke — the skin's house style on a light board panel. The current
+-- tile is marked by the screen's cursor clamp and NOT by a gold fill (a gold fill
+-- would read as an option that is ON, which nothing here is); the label keeps the
+-- size/thickness step as well. The clamp is drawn AFTER the row — its ink sits 3px
+-- proud of the tile, which the next tile must not paint over. BACK / SETTINGS /
+-- CHANGE DIFF carry their real badge art (a 32x32 mark on the centre) and their
+-- labels centre at tx+138 — an icon tile pushes its label ~7px right; PLAY and
+-- PRACTICE, which have no icon, centre on the tile at tx+131.
+local function draw_controls(ids, st, x, y, fade, band, stroke)
+    draw_section_shell(band, x, y, fade)
+    local cy = y + 11 + PLATE_H / 2             -- the tile row's own centre
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        fill_rect(tx, y + 11, 262, 60, TAN, 255 * fade)
+        fill_rect(tx, y + 11, 262, PLATE_H, rgba(band, 62), 255 * fade)
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
@@ -533,13 +536,13 @@ local function draw_controls(ids, st, x, y, fade)
             draw_art(ids, CONTROL_ART[i], tx + 33, cy, 32, 32, extra)
             label_x, label_w = tx + 66, 145
         end
-        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, TAN,
-                      is_cur and 4 or 3, label_x, y + 11, label_w, 60, fade)
+        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, WHITE, stroke,
+                      is_cur and 4 or 3, label_x, y + 11, label_w, PLATE_H, fade)
     end
     -- the cursor: the clamp on the current tile, after the whole row
     local cur = (st.control or 1) + 1
     if cur >= 1 and cur <= 5 then
-        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, 60, fade)
+        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, PLATE_H, fade)
     end
 end
 
@@ -550,11 +553,11 @@ end
 -- level number centred at +80, the label's LEFT edge at +104, the 56x30 tier
 -- pill at +192..+248. They hang off the SEGMENT's centre (y+41, 7px inside the
 -- plate), not the card's centre — the design's pill sits at y 26..55.
-local function draw_picker(ids, model, st, x, y, fade)
+local function draw_picker(ids, model, st, x, y, fade, band, stroke)
     local cells = model:picker_cells()
+    draw_section_shell(band, x, y, fade)
     local seg_top = y + 11
-    local cy = seg_top + 30                       -- the segment's own centre, y+41
-    fill_rect(x + 11, y + 4, 1374, 74, INK, 255 * fade)
+    local cy = seg_top + PLATE_H / 2              -- the segment's own centre
     local cur_x
     for i = 1, 5 do
         local sx = x + 17 + (i - 1) * 276
@@ -564,7 +567,7 @@ local function draw_picker(ids, model, st, x, y, fade)
         -- A present segment wears the tan plate; an ABSENT one is washed out to
         -- ink so it reads as disabled — the cursor never lands on it (skipped in
         -- move_picker), and the commit refuses it.
-        fill_rect(sx, seg_top, 262, 60, present and TAN_D or INK, 255 * fade)
+        fill_rect(sx, seg_top, 262, PLATE_H, present and rgba(band, 62) or rgba(INK, 70), 255 * fade)
         if is_cur then cur_x = sx end            -- the clamp, drawn after the row:
                                                  -- on the ink plate its outline is
                                                  -- invisible and the gold bracket
@@ -578,7 +581,7 @@ local function draw_picker(ids, model, st, x, y, fade)
                      { frame = (i - 1) * 11 + (lv - 1), fade = fade })
             -- left-aligned at the station, not centred in a slot: all five
             -- labels start on the same 104 line in the design
-            draw_text_at(T(COURSE_NAME[i], 22, INK, TAN, 3), sx + 104, cy, fade, 84)
+            draw_text_at(T(COURSE_NAME[i], 22, WHITE, stroke, 3), sx + 104, cy, fade, 84)
             if cell.tier and cell.tier ~= "" then
                 draw_tier_pill(ids, cell.tier, sx + 220, cy, 56, 30, 18, fade)
             else
@@ -594,7 +597,7 @@ local function draw_picker(ids, model, st, x, y, fade)
                          sx + 104, cy, fade * 0.4)
         end
     end
-    if cur_x then draw_clamp(cur_x, seg_top, 262, 60, fade) end
+    if cur_x then draw_clamp(cur_x, seg_top, 262, PLATE_H, fade) end
 end
 
 -- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
@@ -1021,11 +1024,16 @@ function M.draw(self, model)
     -- the list: the cursor row's own slot is the vertical centre of the block
     local cursor_top = TOP_ROW + CURSOR_ROW * CARD_H          -- = 532
     local cursor_drawn = false                                -- did the cursor row paint?
+    -- The selected card's section unfolds straight under it and takes CARD_IN of
+    -- room: every row BELOW the cursor shifts down by exactly that much, so the
+    -- section covers no chart and the rows above the cursor never move (Joseph
+    -- 2026-10-13 — the list makes room instead of covering the next entry).
+    local sec_h = st.selected and CARD_IN or 0
     for off = MIN_OFF, MAX_OFF do
         local row = model:row(off)
         if row then
             local x = CARD_X
-            local y = cursor_top + off * CARD_H
+            local y = cursor_top + off * CARD_H + ((off > 0) and sec_h or 0)
             local is_cursor = (off == 0)
             if row.kind == "chart" then
                 -- A CHART row ALWAYS draws its own card, selected or not. The
@@ -1043,42 +1051,28 @@ function M.draw(self, model)
             else
                 draw_pair_card(ids, row.kind, x, y, 1.0)
             end
-            if is_cursor then
-                draw_cursor_rim(x, y, 1.0)
-                cursor_drawn = true
-            end
+            if is_cursor then cursor_drawn = true end
         end
     end
 
-    -- The selected chart's submenu — BACK / SETTINGS / PLAY / PRACTICE / CHANGE
-    -- DIFF, or the CHANGE DIFF picker while it is open — drawn as its own panel in
-    -- the card slot DIRECTLY BELOW the cursor card (the card itself stays put
-    -- above). "Below" is read as the next slot of the list, not as a gap and not as
-    -- a push:
-    --   * the 4px inter-card gap is far too small to hold a 84px panel, so "below"
-    --     has to read as the next slot of the design's block of 9;
-    --   * pushing the rows below down would shove the bottom row of the block into
-    --     the footer hints, and it would break the list's own composition;
-    --   * the slot below is the row nearest the card you are acting on, and the
-    --     panel fills that WHOLE slot (the ink footprint below, then the strip's own
-    --     plate inset 11 inside it), so the panel occupies exactly one row's
-    --     footprint: the list keeps its flush 9-row rhythm, the card keeps its
-    --     slot, and only the single adjacent row is covered. The plate is inset
-    --     (11,4) inside that footprint, so without the ink fill behind it the row
-    --     below would show through in an 11px column down each side.
-    -- Room: the cursor row is PINNED — TOP_ROW + CURSOR_ROW * CARD_H is a constant,
-    -- so the card is always at y 532 and this panel always at 616..700, well clear
-    -- of the screen bottom, wherever the cursor is in the list. The guard below is
-    -- for a future layout that moves the pinned row (or a hand-authored contrast):
-    -- it flips the panel ABOVE the card rather than letting it run off-screen.
+    -- The selected chart's OWN section — BACK / SETTINGS / PLAY / PRACTICE /
+    -- CHANGE DIFF, or the CHANGE DIFF picker while it is open — unfolding beneath
+    -- that card as PART OF IT (Joseph 2026-10-13): it begins at the card's own
+    -- bottom edge with no gap and wears the card's own two tones — the genre's
+    -- saturated band frame and the band's light panel — so card + section read as
+    -- one piece, the card's bottom ring doubling as the divider between the two
+    -- plate areas. The rows below the cursor were pushed down by `sec_h` in the row
+    -- loop above, so the list opens the room rather than having a chart covered; the
+    -- cursor row stays PINNED at y 532, so the section always lands at 612..692.
     if st.selected then
-        local sub_y = cursor_top + CARD_H
-        if sub_y + CARD_H > 1014 then sub_y = cursor_top - CARD_H end
-        fill_rect(CARD_X, sub_y, CARD_W, CARD_H, INK, 255)
+        local info = model:info(0)
+        local frame = (info and REF[info.genre_index]) or 0
+        local band, stroke = BAND[frame] or BAND[0], RIM[frame] or RIM[0]
+        local sec_y = cursor_top + CARD_IN
         if st.picker_open then
-            draw_picker(ids, model, st, CARD_X, sub_y, 1.0)
+            draw_picker(ids, model, st, CARD_X, sec_y, 1.0, band, stroke)
         else
-            draw_controls(ids, st, CARD_X, sub_y, 1.0)
+            draw_controls(ids, st, CARD_X, sec_y, 1.0, band, stroke)
         end
     end
 
@@ -1088,13 +1082,15 @@ function M.draw(self, model)
     -- bottom arms — so the caps are drawn here, once, after every row. They still
     -- sit under the footer and the dialog, which are painted below. They belong
     -- to the plain card alone: the Filter/Sort dialog covers the list, and in the
-    -- selected state the submenu panel occupies the card slot immediately below,
-    -- which the caps' own bottom arms (8px past the card) would land on — so the
-    -- selected state suppresses them and the card's gold cursor rim is what marks it.
-    -- They show for every other kind of cursor row — chart, BACK, FILTER — in both
-    -- the browse and the filtered/zero-result states.
-    if cursor_drawn and not st.selected and not st.filter_open then
-        draw_cursor_caps(CARD_X, cursor_top, 1.0)
+    -- selected state the selected card's section unfolds immediately below (no
+    -- gap), so the caps drop their overhang there and sit flush with the card.
+    -- They show for every cursor row — chart, BACK, FILTER — in the browse state,
+    -- the filtered/zero-result states, AND the selected state (since 2026-10-13 the
+    -- selected card's gold rim is gone, so the clamp IS the marker there too); in
+    -- the selected state the overhang is 0 so the arms sit flush with the card and
+    -- never land on the section unfolding below it.
+    if cursor_drawn and not st.filter_open then
+        draw_cursor_caps(CARD_X, cursor_top, 1.0, st.selected and 0 or nil)
     end
 
     -- No control-hint footer (removed at Joseph's request). The SELECT/DECIDE
