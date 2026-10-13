@@ -1,5 +1,9 @@
 # Companion progress app (Tauri) — implementation plan
 
+**Deprecated.** This was an early side project, since superseded by a newer
+taiko progress app. Kept for reference — everything below is the original
+plan and is historical.
+
 Side project: a desktop companion that reads YataiDON `scores.db` and shows
 Nijiiro-style rank/crown summary cards with filters you control. Updates after
 each play (not mid-song).

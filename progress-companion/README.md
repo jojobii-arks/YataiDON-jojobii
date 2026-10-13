@@ -1,5 +1,7 @@
 # taiko-stats
 
+**Deprecated** — superseded by a newer taiko progress app. Kept for reference.
+
 Local side panel for Nijiiro-style rank / crown totals with filters you control.
 Reads YataiDON `scores.db` read-only and refreshes after each play.
 

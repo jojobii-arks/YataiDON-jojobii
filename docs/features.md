@@ -95,6 +95,9 @@ the arcade's "doron" modifier.
 
 ## Progress companion (`taiko-stats`)
 
+**Deprecated** — an early side project, since superseded by a newer taiko
+progress app. Kept in this repository for reference; it still runs.
+
 A desktop side panel that reads YataiDON's `scores.db` and shows the same rank
 / crown math with filters the in-game pad does not have: course (including an
 Oni+Ura merge), ★1–10 or all, and community tier.

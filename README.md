@@ -1,160 +1,40 @@
-<img src="/docs/logo.png">
 
-A TJA player and Taiko simulator written in C++ using the [raylib](https://www.raylib.com/) library.
+# **This is a fork of [Yonokid/YataiDON](https://github.com/Yonokid/YataiDON).** Everything upstream ships still works as it always has — this adds a set of song-select and progression features on top.
 
-![License](https://img.shields.io/github/license/Yonokid/YataiDON)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-blue)
-[![GitHub Stars](https://img.shields.io/github/stars/Yonokid/YataiDON?style=flat&label=stars)](https://github.com/Yonokid/YataiDON/stargazers)
-[![Discord Members](https://img.shields.io/discord/722513061419810946.svg?label=Discord&logo=discord)](https://discord.gg/XHcVYKW)
-[![Builds](https://github.com/Yonokid/YataiDON/actions/workflows/build.yml/badge.svg)](https://github.com/Yonokid/YataiDON/actions/workflows/build.yml)
+did i vibe code this shit yea, does it work? yeah
 
-## Features
+## What this fork adds
 
-- Cross-platform compatibility (Windows, Linux, macOS, Android, iOS)
-- Controller Support
-- Low latency audio via ASIO or WDM-KS
-- Recursive and Dynamic Song Select Menu
-- Multithreaded Input
-- Multiple chart format support (TJA, Fumen, OSU/OSZ)
-- Background video playback via FFmpeg
-- Skin system with customizable graphics, sounds, and Lua scripting
-- Branches (Normal/Expert/Master difficulty branches)
-- Song search and favorites system
-- Horizontal and vertical song select layout option
-- Multi-language support
-- 3D characters with animations and costume/color customization
-- Online profile sync (scores, title, costume) via a network account
+**Pro song select** — a full-screen chart list that replaces the song wheel, with its own main-menu entry. Every row is a chart and the cursor sits on one, so moving left/right steps through a song's own courses and then onto the neighbouring song. A filter/sort window covers star, difficulty and tier alongside score / crown / A–Z / level sorts, cards take their colours from the song's genre, and resting the cursor on a chart plays that song's preview on a loop. Leaving the screen and coming back restores your folder, filters and cursor position. Dan Dojo folders list their era sets with a direct hand-off into the dojo.
 
-## Modes
-
-- **1 Player**: Single player mode.
-- **2 Player**: Up to 2 players simultaneously.
-- **Dan Dojo**: Challenge mode for back to back songs.
-- **Practice Mode**: Freely scrobble through a song and practice
-
-## System Requirements
-
-- **Windows**: Windows 10 or higher
-- **macOS**: Built via CI, largely untested
-- **Linux**: Ubuntu 20.04 or higher (other distributions may work but are untested)
-- **Android**: Android 10 (API 29) or higher
-- **iOS**: iOS 16.3 or higher; build from source with Xcode (see [iOS guide](ios/README.md))
-
-## FAQ
-
-Q: I'm on Windows and my latency is really high!<br>
-A: Change your `device_type` in game settings to `WDM-KS`, `WASAPI`, or `ASIO` if your computer supports it
-
-## Installation
-
-### Pre-built Binaries
-
-Download the latest release for your operating system from the [releases page](https://github.com/Yonokid/YataiDON/releases).
-
-#### Windows
-1. Install the [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) from Microsoft
-2. Run `YataiDON.exe`
-
-#### Linux
-1. Run `YataiDON.bin`
-
-#### Android
-1. Install `YataiDON-Android.apk` (enable "install from unknown sources" if needed)
-
-## Building from Source
-
-- [Linux](https://github.com/Yonokid/YataiDON/wiki/Linux)
-- [macOS](https://github.com/Yonokid/YataiDON/wiki/Mac-OS)
-- [Windows (MSYS2/MinGW64)](<https://github.com/Yonokid/YataiDON/wiki/Windows-(MSYS2-MingW64)>)
-- [Windows (MSVC)](<https://github.com/Yonokid/YataiDON/wiki/Windows-(MSVC)>) *(page pending)*
-- [Android](https://github.com/Yonokid/YataiDON/wiki/Android)
-- [iOS](ios/README.md)
-
-### Linting
-
-With `clang-tidy` and `run-clang-tidy` installed, run this from the repository root
-after configuring a build in `build/` to generate `build/compile_commands.json`:
+**Community clear-tier list** (ESE / taiko.wiki) — gold tier letters on the song boards plus a level-aware Tier Sort. A tier is per song, course *and* star level: ★6–★10 each carry their own letter scale, and titles are matched before folder names because on-disk folders often diverge from wiki titles. The list is community-curated data, so it is **not shipped in this repository** — fetch it once with:
 
 ```sh
-run-clang-tidy -p build "^$(pwd)/src/"
+python tools/fetch_tiers.py     # writes data/tier_data.json
 ```
 
-## Profiling
+The game never touches the network at runtime. Without the file, tier badges and Tier Sort are simply disabled — nothing breaks.
 
-Build with `-DYATAIDON_PROFILER=ON` to compile in the [Tracy](https://github.com/wolfpld/tracy) client,
-then run the Tracy profiler GUI of the same version (v0.14.1) and connect to the game. Frames, screen
-update / draw, every Lua callback, texture and chart loading and the
-audio mixer show up as zones; Tracy's sampling also covers functions without a zone (run the game as
-administrator on Windows for call stacks). `tracy-capture -o trace.tracy` records a session to a file that can be attached to an issue.
+**Difficulty progress pad** — arcade-style rank and crown totals, aggregated in the engine: an exclusive bucket per performance grade plus Clear / Full Combo / DFC counts, tallied per course and star.
 
-The client only listens on localhost, so the GUI has to run on the same machine; configure with
-`-DTRACY_ONLY_LOCALHOST=OFF` to profile over the network (the connection is unauthenticated).
+**Hidden note modifier ("doron")** — hides a percentage of the approach lane before the judge, with a soft fade. **F3** opens a live tuner for the hide distance and fade, and overall fade smoothness is the `[hidden] fade_percent` setting in `config.toml`.
 
-On Linux, call-stack sampling and context switches need root or a lower `kernel.perf_event_paranoid`
-(`sudo sysctl kernel.perf_event_paranoid=1`). Distro packages of the GUI rarely match v0.14.1, so build
-`profiler/` from the v0.14.1 tag. On Wayland, if the GUI crashes at startup with a floating point
-exception, build it with `-DLEGACY=ON` to run through X11.
+**Progress companion (`taiko-stats`)** — **deprecated.** An early side project; left here for reference. It reads the game's `scores.db` read-only and shows the same rank/crown maths with filters the in-game pad does not have: course (including an Oni+Ura merge), ★1–10 or all, and community tier.
 
-## Controls
+```sh
+cd progress-companion && pnpm install && launch.bat
+```
 
-- Press **F1** during gameplay for quick restart
-- Press **ESC** during any screen to go back
-- Press **Space Bar** during song select to favorite a song
-- Press **Left Control** or **Right Control** to skip songs by 7
-- Press **F5** during song select to refresh
-- Generic drum keybinds can be customized in `config.toml` or through the in-game settings menu
+Full write-ups, including the engine surfaces each feature touches, are in [`docs/features.md`](docs/features.md).
 
-## Contributing
+### Building this fork
 
-Contributions are welcome! Please keep in mind:
-- Check the [issues page](https://github.com/Yonokid/YataiDON/issues) for enhancements and bugs before starting work
-- Feel free to open new issues for bugs or feature requests
+- **The parent skins are not in this repository.** They are git submodules on an external host. Fetch them with:
 
-## Known Issues
+  ```sh
+  git submodule update --init Skins/PyTaikoGreen Skins/YataiDONRed Skins/YataiDONNijiiro
+  ```
 
-See the [issues page](https://github.com/Yonokid/YataiDON/issues) or the Discord for current bugs and planned enhancements.
-
-## License
-
-This project is licensed under the terms specified in the LICENSE file.
-
-## Acknowledgments
-
-Dependencies used in the project:
-- [raylib](https://www.raylib.com/) - A simple and easy-to-use library to enjoy videogames programming.
-- [SDL3](https://github.com/libsdl-org/SDL) - Cross-platform development library for audio, input, and graphics.
-- [SQLite](https://www.sqlite.org/) - Self-contained, serverless SQL database engine.
-- [RapidJSON](https://github.com/Tencent/rapidjson) - Fast JSON parser/generator for C++.
-- [toml++](https://github.com/marzer/tomlplusplus) - TOML config file parser and writer for C++.
-- [spdlog](https://github.com/gabime/spdlog) - Fast C++ logging library.
-- [Lua](https://github.com/marovira/lua) - Lightweight, embeddable scripting language.
-- [sol2](https://github.com/ThePhD/sol2) - C++ binding library for Lua.
-- [cpptrace](https://github.com/jeremy-rifkin/cpptrace) - Stacktrace library for C++.
-- [libsndfile](https://github.com/libsndfile/libsndfile) - Library for reading and writing audio files.
-- [libsamplerate](https://github.com/libsndfile/libsamplerate) - Sample rate converter for audio.
-- [FFmpeg](https://ffmpeg.org/) - Complete, cross-platform multimedia framework.
-- [PortAudio](http://www.portaudio.com/) - Cross-platform audio I/O library.
-- [miniz](https://github.com/richgel999/miniz) - Single-file ZIP/DEFLATE library.
-
-People (in no particular order):
-- [IID](https://github.com/IepIweidieng/)
-- [mc08](https://github.com/splitlane/)
-- [QBaraki](https://github.com/QBaraki)
-- [KabanFriends](https://github.com/KabanFriends/)
-- [DragonRatTiger](https://github.com/DragonRatTiger/)
-- [Komi](https://github.com/0auBSQ/)
-- [sumandrew](https://github.com/somepin)
-- [WallK](https://github.com/WallK)
-- [dpkgluci](https://github.com/germe-deb)
-- [chuchy](https://github.com/magickale) (osu parser)
-- [churrochef](github.com/churro-chef) (vertical scroll)
-- [cainan](https://github.com/cainan-c/) (3d don chan)
-- [RyutoSetsujin](https://github.com/RyutoSetsujin/)
-- [Nyannurs](https://github.com/nyannurs) (testing)
-- [fehpizza](https://github.com/fehh44) (logo)
-- Radix (testing)
-- Thonktheta (testing)
-- SomehowScarlet (nix os)
-- SunnyDeez (testing)
-
----
+  A clone that cannot reach that host still builds and runs the engine; only the Nijiiro-based skins need it.
+- **The tier list is fetched, not committed** — see above.
+- Pre-built binaries on the [releases page](https://github.com/Yonokid/YataiDON/releases) are upstream's, and do not include the features above. This fork's features need a build from source.
