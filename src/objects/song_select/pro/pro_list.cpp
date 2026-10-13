@@ -233,7 +233,8 @@ bool ProListModel::open_saved_context(Context ctx, const fs::path& folder_path,
 
 // ---- building -------------------------------------------------------------
 
-void ProListModel::begin_build() {
+void ProListModel::begin_build(bool snap_cursor_to_filter) {
+    snap_to_filter_ = snap_cursor_to_filter;
     building_ = true;
     phase_ = Phase::SONGS;
     cand_.clear();
@@ -247,6 +248,7 @@ void ProListModel::begin_build() {
         build_dan_rows();
         building_ = false;
         phase_ = Phase::IDLE;
+        snap_to_filter_ = false;   // the dan world has no pairs to snap to
         return;
     }
     collect_context_songs();
@@ -256,6 +258,7 @@ void ProListModel::begin_build() {
         building_ = false;
         phase_ = Phase::IDLE;
         cursor_ = 0;
+        snap_to_filter_ = false;   // the root has no FILTER/SORT row at all
     }
 }
 
@@ -450,6 +453,28 @@ void ProListModel::assemble_rows() {
         }
     }
     if (cursor_ < 0 || cursor_ >= (int)rows_.size()) cursor_ = 0;
+    if (snap_to_filter_) {
+        // A filter/sort change rebuilt the list: the old cursor INDEX now names a
+        // different row, so land somewhere that means the same thing every time —
+        // the FILTER/SORT button that sits immediately before the folder's first
+        // chart (Joseph 2026-10-13: don't let the cursor jump around; snap it to
+        // the firstmost filter/sort button before the first chart in the folder).
+        //
+        // That button is the LAST pair in the array, because the list wraps: row
+        // 0's left neighbour is the trailing pair (the ribbon shows it above the
+        // first chart). So after a change the cursor rests on FILTER/SORT with
+        // the folder's first chart directly below it, whatever the filter did to
+        // the row count.
+        snap_to_filter_ = false;
+        for (int i = (int)rows_.size() - 1; i >= 0; --i) {
+            if (rows_[i].kind == RowKind::FILTER) {
+                cursor_ = i;
+                spdlog::info("[pro] filter/sort change -> cursor snapped to FILTER/SORT (row {} / {})",
+                             cursor_, (int)rows_.size());
+                break;
+            }
+        }
+    }
 }
 
 bool ProListModel::folder_has_dan_content(const fs::path& folder) const {
@@ -662,11 +687,21 @@ void ProListModel::set_cursor(int index) {
 void ProListModel::set_sort(Sort s) {
     if (sort_ == s) return;
     sort_ = s;
-    if (context_ != Context::ROOT) begin_build();
+    rebuild_for_filter();
 }
 
 void ProListModel::filter_changed() {
-    if (context_ != Context::ROOT) begin_build();
+    rebuild_for_filter();
+}
+
+// A filter or sort change rebuilds the list, but the old cursor index names a
+// different row afterwards — so the cursor must not be left wherever that index
+// happens to land. Every filter/sort rebuild puts it on the FILTER/SORT button
+// that sits immediately before the folder's first chart; assemble_rows does the
+// arithmetic (it is the only place that knows the new row list).
+void ProListModel::rebuild_for_filter() {
+    if (context_ == Context::ROOT) return;   // the root list is never filtered
+    begin_build(true);
 }
 
 const char* ProListModel::sort_name() const {
@@ -881,7 +916,7 @@ void ProListModel::reconcile_tier() {
     spdlog::info("[pro] tier '{}' not offered at star {} -- falling back to ALL",
                  filter_.tier, filter_.star);
     filter_.tier.clear();
-    if (context_ != Context::ROOT) begin_build();
+    rebuild_for_filter();
 }
 
 int ProListModel::filter_value_count() const {
@@ -959,7 +994,7 @@ bool ProListModel::advance_filter_value() {
         default:
             break;
     }
-    if (context_ != Context::ROOT) begin_build();
+    rebuild_for_filter();
     return false;
 }
 

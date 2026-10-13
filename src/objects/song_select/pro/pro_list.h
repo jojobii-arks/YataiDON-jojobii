@@ -273,6 +273,9 @@ private:
 
     std::vector<Row> rows_;
     int cursor_ = 0;
+    // A filter/sort rebuild must not land the cursor on whatever the old index
+    // happens to name — see rebuild_for_filter / assemble_rows.
+    bool snap_to_filter_ = false;
 
     // Selected-chart state.
     bool selected_ = false;
@@ -304,7 +307,8 @@ private:
     std::vector<std::string> filter_tier_values() const;          // ALL, (set at a star), NONE
 
     // ---- build state (chunked) -----------------------------------------
-    void begin_build();
+    void begin_build(bool snap_cursor_to_filter = false);
+    void rebuild_for_filter();            // a filter/sort change: rebuild + snap the cursor
     void build_songs_step(size_t budget);
     void build_sort_and_assemble();
     void collect_context_songs();

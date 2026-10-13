@@ -816,11 +816,13 @@ end
 -- chip's fixed 30px geometry allows. The glyphs are single bold shapes (the oni
 -- is a solid demon head), so 24px reads; anything smaller would not.
 local DIFF_TILE, DIFF_GAP = 26, 4
-local function draw_chart_chip(x, y, d, star, fade)
-    fill_round(x, y, 380, 30, INK, 255 * fade, 13)
-    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, NIJI_CHART, 255 * fade, 6)
-    local ids = M._ids()
-    local tx = x + 11
+
+-- The five difficulty tiles, canonical order EASY..URA, drawn from a chip's own
+-- left edge and read by COLOUR: gold = ON, dim tan = OFF. ONE implementation, so
+-- the root strip and the in-folder chart chip cannot disagree with each other or
+-- with the Filter/Sort dialog's own tiles. Returns the x just past the last tile
+-- so a caller can continue the row.
+local function draw_diff_tiles(ids, tx, y, d, fade)
     local iy = y + math.floor((30 - DIFF_TILE) / 2 + 0.5)
     for i = 1, 5 do
         local on = d[i] and true or false
@@ -830,22 +832,25 @@ local function draw_chart_chip(x, y, d, star, fade)
                  DIFF_TILE - 2, DIFF_TILE - 2,
                  { frame = i - 1, fade = on and fade or fade * 0.45 })
     end
+    return tx + 5 * DIFF_TILE + 4 * DIFF_GAP
+end
+
+local function draw_chart_chip(x, y, d, star, fade)
+    fill_round(x, y, 380, 30, INK, 255 * fade, 13)
+    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, NIJI_CHART, 255 * fade, 6)
+    local endx = draw_diff_tiles(M._ids(), x + 11, y, d, fade)
     if (star or 0) > 0 then
         local t = W("★" .. star, 18, INK, 2)
-        if t then draw_text_at(t, tx + 5 * DIFF_TILE + 4 * DIFF_GAP + 12, y + 15, fade) end
+        if t then draw_text_at(t, endx + 12, y + 15, fade) end
     end
 end
 
--- the left-column status chips — FLOW 1 (root) shows one combined strip,
--- FLOW 2/5 (inside a folder) stack ★ · courses / TIER / SORT
+-- the left-column status chips: the chart chip (the difficulty set as inline
+-- tiles + the ★) then TIER then SORT, the same stack in every context. The root
+-- used to collapse these into one word strip; it no longer does — the in-folder
+-- panel is the source of truth and outside a folder matches it exactly (Joseph
+-- 2026-10-13).
 local function draw_chips(st, x, fade)
-    local d = st.diff or {}
-    local parts = {}
-    local names = {}
-    for i = 1, 5 do if d[i] then names[#names + 1] = COURSE_NAME[i] end end
-    if (st.star or 0) > 0 then parts[#parts + 1] = "★" .. st.star end
-    if #names < 5 then parts[#parts + 1] = table.concat(names, " + ") end
-
     local sort_disp = (st.sort == "A-Z") and "A–Z" or (st.sort or "A–Z")
     local tier_disp = (st.tier == "" or st.tier == nil) and "ALL"
                    or (st.tier == "NONE" and "NONE" or st.tier)
@@ -857,26 +862,10 @@ local function draw_chips(st, x, fade)
         return 1
     end
 
-    if st.context == "root" then
-        -- filter and sort never touch the root list — one chip says so
-        local txt
-        if #parts == 0 and st.sort == "A-Z" then
-            txt = "NO FILTER · NO SORT"
-        else
-            local p2 = parts
-            if #p2 == 0 then p2[#p2 + 1] = "NO FILTER" end
-            p2[#p2 + 1] = "SORT " .. sort_disp
-            txt = table.concat(p2, " · ")
-        end
-        draw_chip(x, 280, txt, NIJI_CHART, fade)
-        return 1
-    end
-
-    -- the CHART chip: the difficulty SET as inline icons, never words. The ★,
+    -- The chart chip: the difficulty SET as inline icons, never words. The ★,
     -- when one is set, rides along as a compact "★N" (see draw_chart_chip).
-    -- The ROOT branch above is deliberately left alone: its single strip is a
-    -- "filter/sort says so" summary for a list that is never filtered, and it
-    -- keeps its words.
+    -- The panel is identical outside a folder and inside one — the root has no
+    -- special strip any more, it draws this same three-chip stack.
     draw_chart_chip(x, 280, st.diff, st.star, fade)
     draw_chip(x, 318, "TIER: " .. tier_disp, NIJI_TIER, fade)
     draw_chip(x, 356, "SORT: " .. sort_disp, NIJI_SORT, fade)
@@ -987,10 +976,11 @@ local function draw_details(ids, model, st, x, y, fade)
             sub = fmt_num(row.count or 0) .. " charts under this folder"
         elseif row and row.kind == "all" then
             sub = fmt_num(row.count or 0) .. " charts in the library"
-        else
-            sub = "a folder, not a chart"
         end
-        draw_text_at(W(sub, 16, stroke, 2), tx, y + 94, fade, 332)
+        -- No fallback line: SEARCH / RECENT / FAVORITE and anything else that is
+        -- neither a folder nor ALL simply carries no sub-label (Joseph
+        -- 2026-10-13: drop the "a folder, not a chart" verbiage).
+        if sub then draw_text_at(W(sub, 16, stroke, 2), tx, y + 94, fade, 332) end
     end
 end
 
