@@ -594,7 +594,15 @@ void ProListModel::open_search(const std::string& query) {
 
 void ProListModel::move_filter_cursor(int delta) {
     constexpr int kFilterRows = 8;   // 5 difficulty toggles + star + tier + sort
+    constexpr int kTierRow    = 6;   // the tier row's index
     filter_cursor_ = ((filter_cursor_ + delta) % kFilterRows + kFilterRows) % kFilterRows;
+    // The TIER row is only meaningful once a star level is chosen (★ALL walks the
+    // whole ladder, which is not a filter the user can act on here). While no star
+    // is set, step the cursor straight past it in the direction of travel — the
+    // caller only ever moves by one row, so one extra step clears it for good.
+    if (filter_.star == 0 && filter_cursor_ == kTierRow) {
+        filter_cursor_ = ((filter_cursor_ + delta) % kFilterRows + kFilterRows) % kFilterRows;
+    }
 }
 
 void ProListModel::advance_filter_value() {

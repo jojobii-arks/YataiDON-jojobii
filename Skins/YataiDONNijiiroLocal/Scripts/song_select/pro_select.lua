@@ -85,6 +85,17 @@ local GOLD   = {255, 210, 74}               -- #FFD24A
 local WHITE  = {255, 255, 255}
 local DIV    = {219, 174, 136}              -- #DBAE88, the details panel's dividers
 
+-- Bright 'nijiiro' fills for the left column's status pill and chips. The
+-- screen's dark plates (the ink #1A1108 and the navy #232C3D) sat flat next to
+-- the vivid genre bands beside them, so the user asked for the arcade's own
+-- bright band hues here instead. White text with an ink stroke — the skin's
+-- W() house style for anything on a coloured plate — keeps every string
+-- legible on them, exactly as it already does on the bright tier pills.
+local NIJI_COUNT = {66, 192, 210}          -- #42C0D2 cyan  — the count pill
+local NIJI_CHART = {255, 144, 211}         -- #FF90D3 pink  — the ★ / courses chip
+local NIJI_TIER  = {204, 138, 234}         -- #CC8AEA violet — the TIER chip
+local NIJI_SORT  = {255, 112, 39}          -- #FF7027 orange — the SORT chip
+
 -- Native texture sizes. draw_texture's x2/y2 are ADDITIVE deltas on the natural
 -- size (see draw_board in song_select.lua), so art drawn at a design station has
 -- to say how much to shrink by. Without this every piece drew at its native
@@ -93,11 +104,15 @@ local DIV    = {219, 174, 136}              -- #DBAE88, the details panel's divi
 local NAT = {
     star = {40, 40}, level_number = {48, 48}, branch = {40, 40},
     rank = {40, 40}, crown = {40, 40}, course = {96, 96}, pill = {184, 40},
+    back_icon = {128, 128}, option_icon = {128, 128},
 }
 
 local COURSE_NAME = { "EASY", "NORMAL", "HARD", "ONI", "URA" }
 local CONTROL_NAME = { "BACK", "SETTINGS", "PLAY", "PRACTICE", "CHANGE DIFF" }
 local CONTROL_ICON = { true, true, false, false, true }   -- which tiles carry a mark
+-- The mark each of those tiles wears. CHANGE DIFF reuses the `course` id at its
+-- URA frame (the purple oni) rather than loading diff_sort/diff a second time.
+local CONTROL_ART = { "back_icon", "option_icon", nil, nil, "course" }
 
 local COLLECTION_FRAME = { search = 12, recent = 9, favorite = 0, all = 0 }
 
@@ -174,9 +189,38 @@ local function draw_art(ids, key, cx, cy, w, h, extra)
     tex.draw_texture(id, extra)
 end
 
+-- tex.draw_rect is the ONE draw path the engine routes through
+-- virtual_to_screen_x/y — it rescales by (window size / the skin's declared
+-- 1920x1080) — while tex.draw_texture and OutlinedText::draw both take RAW
+-- pixels. The wheel uses tex.draw_rect ZERO times, for exactly this reason:
+-- mixing the two puts a screen's plates on a different scale from its own text
+-- and art, and it only shows once the window is not the declared size. It is
+-- identity at 1920x1080, which is why every headless shot looked correct and a
+-- borderless run at 2560x1440 had the plates grown while the text stayed put.
+-- `song_select/pro_ui/fill` is this skin's own 8x8 solid white plate (declared in
+-- its texture.json), stretched with x2/y2 and tinted with `color`, which gives an
+-- exact fill on the same raw path as everything else. It has to be a WHITE base —
+-- every solid-colour texture the stock skins ship is black, and a tint multiplies,
+-- so a black plate can never become a colour. (An earlier attempt reused
+-- `diff_sort/level_box`, which is a ROUNDED white pill — it pilled every card.)
+local FILL_NAT_W, FILL_NAT_H = 8, 8
+local FILL_TEX = nil            -- resolved in M._ids()
+
 local function fill_rect(x, y, w, h, c, a)
-    tex.draw_rect(math.floor(x + 0.5), math.floor(y + 0.5), math.floor(w + 0.5),
-                  math.floor(h + 0.5), c[1], c[2], c[3], a)
+    if not FILL_TEX then return end
+    tex.draw_texture(FILL_TEX, {
+        x  = math.floor(x + 0.5),
+        y  = math.floor(y + 0.5),
+        x2 = math.floor(w + 0.5) - FILL_NAT_W,
+        y2 = math.floor(h + 0.5) - FILL_NAT_H,
+        color = { c[1], c[2], c[3], 255 },
+        fade  = (a or 255) / 255,
+    })
+end
+
+-- the same fill, for call sites that carry a loose r, g, b, a
+local function fill_rgb(x, y, w, h, r, g, b, a)
+    fill_rect(x, y, w, h, { r, g, b }, a)
 end
 
 -- The tier pill: a flat plate in the tier colour with a 2px ink rim, drawn the
@@ -202,23 +246,23 @@ end
 -- the three tan plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
 -- NAME(391,994), 6px seams, 11px inset — the SPEC 2 component contract.
 local function chart_plates(x, y, fade)
-    tex.draw_rect(x + 11, y + 11, 118, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
-    tex.draw_rect(x + 135, y + 11, 250, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
-    tex.draw_rect(x + 391, y + 11, 994, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+    fill_rgb(x + 11, y + 11, 118, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+    fill_rgb(x + 135, y + 11, 250, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+    fill_rgb(x + 391, y + 11, 994, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
 end
 
 -- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62)
 local function one_plate(x, y, fade)
-    tex.draw_rect(x + 11, y + 11, 1374, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
+    fill_rgb(x + 11, y + 11, 1374, 62, TAN[1], TAN[2], TAN[3], 255 * fade)
 end
 
 -- ink-outline placeholder for a missing value (2px box, 30% ink)
 local function placeholder(x, y, w, h, fade)
     local a = 77 * fade
-    tex.draw_rect(x, y, w, 2, INK[1], INK[2], INK[3], a)
-    tex.draw_rect(x, y + h - 2, w, 2, INK[1], INK[2], INK[3], a)
-    tex.draw_rect(x, y, 2, h, INK[1], INK[2], INK[3], a)
-    tex.draw_rect(x + w - 2, y, 2, h, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y, w, 2, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y + h - 2, w, 2, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y, 2, h, INK[1], INK[2], INK[3], a)
+    fill_rgb(x + w - 2, y, 2, h, INK[1], INK[2], INK[3], a)
 end
 
 -- ------------------------------------------------------------------- ids
@@ -230,6 +274,9 @@ local function resolve_ids(t)
     t.crown        = get_any("diff_select", "difficulty_crown")
     t.course       = get_any("diff_sort", "diff")
     t.branch       = get_any("yellow_box", "branch_indicator")
+    t.level_box    = get_any("pro_ui", "fill")           -- our own 8x8 solid white fill plate
+    t.back_icon    = get_any("diff_select", "back")     -- the BACK badge, 128x128
+    t.option_icon  = get_any("diff_select", "option")   -- the SETTINGS badge, 128x128
 end
 
 function M._ids()
@@ -240,6 +287,7 @@ function M._ids()
     local t = M._ids_t
     local complete = t.background and t.star and t.level_number and t.rank
                  and t.crown and t.course and t.branch
+                 and t.back_icon and t.option_icon and t.level_box
     -- A folder that is not resident yet resolves to nil on the first frames, and
     -- caching that nil would blank the art for the whole session. Retry the
     -- misses for a bounded number of frames instead.
@@ -249,8 +297,12 @@ function M._ids()
         tex.load_folder("song_select", "yellow_box")
         tex.load_folder("song_select", "diff_select")
         tex.load_folder("song_select", "diff_sort")
+        tex.load_folder("song_select", "pro_ui")
         resolve_ids(t)
     end
+    -- the fill plate is drawn on the raw path, so it has to be visible to
+    -- fill_rect before anything paints; re-read each frame so a late folder wins
+    FILL_TEX = t.level_box
     return t
 end
 
@@ -260,10 +312,36 @@ end
 -- selected card — its board ring at a 5px inset). No halo, no gap change.
 local function draw_cursor_rim(x, y, fade)
     local a = 255 * fade
-    tex.draw_rect(x, y, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    tex.draw_rect(x, y + CARD_H - CURSOR_T, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
-    tex.draw_rect(x, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
-    tex.draw_rect(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x, y, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x, y + CARD_H - CURSOR_T, CARD_W, CURSOR_T, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
+    fill_rgb(x + CARD_W - CURSOR_T, y, CURSOR_T, CARD_H, GOLD[1], GOLD[2], GOLD[3], a)
+end
+
+-- The cursor caps: a C-shaped gold bracket at each end of the cursor card,
+-- ink-outlined (FLOW 2's selected card). The design board is 1428x100 over a
+-- 1396x84 card, so the board origin sits (16,8) outside the card — every
+-- coordinate below is the board value shifted into card-relative space
+-- (board x-16, y-8). Ink is the outline; the gold is inset 3px inside it on
+-- every side, so ink is written first per cap. The design's 13px outer-corner
+-- radius is NOT drawn: the engine exposes only tex.draw_rect (no rounded
+-- variant), so the brackets are straight-edged.
+local function draw_cursor_caps(x, y, fade)
+    local a = 255 * fade
+    -- left cap: ink outline, then gold on top of it
+    fill_rect(x - 16, y - 8, 15, 100, INK, a)
+    fill_rect(x - 16, y - 8, 39, 15, INK, a)
+    fill_rect(x - 16, y + 77, 39, 15, INK, a)
+    fill_rect(x - 13, y - 5, 9, 94, GOLD, a)
+    fill_rect(x - 13, y - 5, 33, 9, GOLD, a)
+    fill_rect(x - 13, y + 80, 33, 9, GOLD, a)
+    -- right cap: the same six shapes, mirrored across the card
+    fill_rect(x + 1397, y - 8, 15, 100, INK, a)
+    fill_rect(x + 1373, y - 8, 39, 15, INK, a)
+    fill_rect(x + 1373, y + 77, 39, 15, INK, a)
+    fill_rect(x + 1400, y - 5, 9, 94, GOLD, a)
+    fill_rect(x + 1376, y - 5, 33, 9, GOLD, a)
+    fill_rect(x + 1376, y + 80, 33, 9, GOLD, a)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
@@ -336,75 +414,112 @@ local function draw_pair_card(ids, kind, x, y, fade)
     card_base(band, x, y, fade)
     one_plate(x, y, fade)
     local cy = y + CARD_H / 2
-    fill_rect(x + 33, y + 25, 34, 34, INK, 200 * fade)     -- the design's icon slot
+    -- the design's icon slot (33,25) 34x34. The skin ships exactly two generic
+    -- action badges — diff_select/back_en and diff_select/option_en, the same
+    -- pair the controls strip wears for BACK and SETTINGS — so those are what
+    -- these two rows carry; there is no filter-specific art to draw.
+    draw_art(ids, is_back and "back_icon" or "option_icon", x + 50, cy, 34, 34, { fade = fade })
     local label = is_back and "BACK" or "FILTER/SORT"
     draw_text_at(W(label, 30, RIM[0], 5), x + 83, cy, fade, 800)
 end
 
--- the DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch
+-- the DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
+-- Colours and stations off the Penpot strip render: the plate is the dialog's
+-- TAN_D and a resting tile is TAN (the old ink plate + TAN_D tiles sat a step too
+-- dark, so the strip read as a row of chocolate buttons), the current tile GOLD.
+-- BACK / SETTINGS / CHANGE DIFF carry their real badge art — a 32x32 mark on the
+-- centre the flat square used to occupy — and their labels centre at the design's
+-- tx+138, not the tile centre: an icon tile pushes its label ~7px right (PLAY and
+-- PRACTICE, which have no icon, centre on the tile at tx+131).
 local function draw_controls(ids, st, x, y, fade)
-    fill_rect(x + 11, y + 4, 1374, 74, INK, 255 * fade)
+    local cy = y + 11 + 30                     -- the tile row's own centre (not the card's)
+    fill_rect(x + 11, y + 4, 1374, 74, TAN_D, 255 * fade)
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        fill_rect(tx, y + 11, 262, 60, is_cur and GOLD or TAN_D, 255 * fade)
+        local tile = is_cur and GOLD or TAN
+        fill_rect(tx, y + 11, 262, 60, tile, 255 * fade)
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
-            -- marked tile: a 34x34 mark at +16, the label in the remaining 204
-            fill_rect(tx + 16, y + 24, 34, 34, INK, 200 * fade)
-            label_x, label_w = tx + 58, 204
+            -- the badge art, scaled from its native 128 or 96, at the design's
+            -- 32x32 station; the outline is the tile's own colour so the label
+            -- reads as bare ink (the design shows no halo on either fill)
+            local extra = { fade = fade }
+            if CONTROL_ART[i] == "course" then extra.frame = 4 end   -- URA = the purple oni
+            draw_art(ids, CONTROL_ART[i], tx + 33, cy, 32, 32, extra)
+            label_x, label_w = tx + 66, 145
         end
-        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, TAN,
+        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, tile,
                       is_cur and 4 or 3, label_x, y + 11, label_w, 60, fade)
     end
 end
 
 -- the CHANGE DIFF picker: plate (11,4,1374,74), five 262x60 segments at a 276
--- pitch — mark @ +14, level @ +62, label @ +104, tier pill 56x30 @ +192
+-- pitch. Every station below is measured off the 1396x84 design artboard, where
+-- the five segments are identical to the pixel: course icon centred at +34,
+-- level number centred at +80, the label's LEFT edge at +104, the 56x30 tier
+-- pill at +192..+248. They hang off the SEGMENT's centre (y+41, 7px inside the
+-- plate), not the card's centre — the design's pill sits at y 26..55.
 local function draw_picker(ids, model, st, x, y, fade)
     local cells = model:picker_cells()
-    local cy = y + CARD_H / 2
+    local seg_top = y + 11
+    local cy = seg_top + 30                       -- the segment's own centre, y+41
     fill_rect(x + 11, y + 4, 1374, 74, INK, 255 * fade)
     for i = 1, 5 do
         local sx = x + 17 + (i - 1) * 276
         local cell = cells[i] or {}
         local is_cur = ((st.picker or 0) + 1) == i
-        fill_rect(sx, y + 11, 262, 60, is_cur and GOLD or TAN_D, 255 * fade)
+        fill_rect(sx, seg_top, 262, 60, TAN_D, 255 * fade)
+        -- The current segment keeps its own fill and is marked with the design's
+        -- 3px gold ring — the same idiom the Filter/Sort dialog uses for its
+        -- current cell — so the tier's colour still reads. (Filling the whole
+        -- tile gold buried the pill colour and made the segment unreadable.)
+        if is_cur then
+            local a = 255 * fade
+            fill_rgb(sx, seg_top, 262, 3, GOLD[1], GOLD[2], GOLD[3], a)
+            fill_rgb(sx, seg_top + 57, 262, 3, GOLD[1], GOLD[2], GOLD[3], a)
+            fill_rgb(sx, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
+            fill_rgb(sx + 259, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
+        end
         if cell.has_course then
-            draw_art(ids, "course", sx + 51, cy, 40, 40, { frame = i - 1, fade = fade })
+            draw_art(ids, "course", sx + 34, cy, 40, 40, { frame = i - 1, fade = fade })
             local lv = math.max(1, math.min(11, cell.level or 1))
-            draw_art(ids, "level_number", sx + 97, cy, 36, 36,
+            draw_art(ids, "level_number", sx + 80, cy, 36, 36,
                      { frame = (i - 1) * 11 + (lv - 1), fade = fade })
-            draw_text_box(COURSE_NAME[i], 22, INK, TAN, 3, sx + 104, y + 11, 86, 60, fade)
+            -- left-aligned at the station, not centred in a slot: all five
+            -- labels start on the same 104 line in the design
+            draw_text_at(T(COURSE_NAME[i], 22, INK, TAN, 3), sx + 104, cy, fade, 84)
             if cell.tier and cell.tier ~= "" then
-                draw_tier_pill(ids, cell.tier, sx + 237, cy, 56, 30, 18, fade)
+                draw_tier_pill(ids, cell.tier, sx + 220, cy, 56, 30, 18, fade)
             else
-                placeholder(sx + 209, cy - 15, 56, 30, fade)
+                placeholder(sx + 192, cy - 15, 56, 30, fade)
             end
         else
-            -- a difficulty this song does not have: the empty state
+            -- a difficulty this song does not have: the empty state, at the
+            -- same two stations the live segment uses
             placeholder(sx + 14, cy - 20, 40, 40, fade)
-            draw_text_box(COURSE_NAME[i], 20, { 150, 130, 112 }, INK, 2,
-                          sx + 100, y + 11, 130, 60, fade * 0.8)
+            draw_text_at(T(COURSE_NAME[i], 22, { 150, 130, 112 }, INK, 2),
+                         sx + 104, cy, fade * 0.8)
         end
     end
 end
 
--- count pill (48,196) 380x64
+-- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
 local function draw_count_pill(ids, n, x, y, fade)
     fill_rect(x, y, 380, 64, INK, 255 * fade)
-    fill_rect(x + 3, y + 3, 374, 58, { 35, 44, 61 }, 255 * fade)
-    local t = T(fmt_num(n), 44, GOLD, INK, 3)
+    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 64 - 2 * RIM_T, NIJI_COUNT, 255 * fade)
+    local t = W(fmt_num(n), 44, INK, 3)
     if t then draw_text_at(t, x + 22, y + 32, fade) end
-    local label = T("CHARTS", 20, { 138, 147, 166 }, INK, 2)
+    local label = W("CHARTS", 20, INK, 2)
     if label then draw_text_at(label, x + 380 - 16 - label.width, y + 36, fade) end
 end
 
--- one 380x30 status chip: ink strip, coloured text
+-- one 380x30 status chip: bright nijiiro plate inside an ink rim, white text
 local function draw_chip(x, y, text2, colour, fade)
     if not text2 or text2 == "" then return end
     fill_rect(x, y, 380, 30, INK, 255 * fade)
-    local t = T(text2, 18, colour, INK, 2)
+    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, colour, 255 * fade)
+    local t = W(text2, 18, INK, 2)
     if t then draw_text_at(t, x + 12, y + 15, fade, 356) end
 end
 
@@ -433,15 +548,15 @@ local function draw_chips(st, x, fade)
             p2[#p2 + 1] = "SORT " .. sort_disp
             txt = table.concat(p2, " · ")
         end
-        draw_chip(x, 280, txt, GOLD, fade)
+        draw_chip(x, 280, txt, NIJI_CHART, fade)
         return 1
     end
 
     local head
     if #parts == 0 then head = "ANY CHART" else head = table.concat(parts, " · ") end
-    draw_chip(x, 280, head, GOLD, fade)
-    draw_chip(x, 318, "TIER: " .. tier_disp, { 242, 244, 248 }, fade)
-    draw_chip(x, 356, "SORT: " .. sort_disp, { 242, 244, 248 }, fade)
+    draw_chip(x, 280, head, NIJI_CHART, fade)
+    draw_chip(x, 318, "TIER: " .. tier_disp, NIJI_TIER, fade)
+    draw_chip(x, 356, "SORT: " .. sort_disp, NIJI_SORT, fade)
     return 3
 end
 
@@ -534,22 +649,37 @@ end
 -- kat moves the item cursor, don advances that item's value (SPEC 5 proposal).
 local DLG_X, DLG_Y, DLG_W, DLG_H = 360, 190, 1200, 700
 
-local function dlg_row_label(text2, cy, active, fade)
-    if active then fill_rect(DLG_X + 34, cy - 22, 252, 44, GOLD, 255 * fade) end
+local function dlg_row_label(text2, cy, fade)
     draw_text_at(W(text2, 26, INK, 3), DLG_X + 40, cy, fade)
 end
 
-local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade)
-    fill_rect(x, y, w, h, fillc or TAN_D, 255 * fade)
+-- ONE border for the whole dialog. A 3px ink rim inset into the element marks the
+-- cursor AND every chosen / on state — the difficulty toggles that are on, the
+-- chosen star, tier and sort values — so the dialog speaks a single vocabulary
+-- instead of switching between gold fills, bespoke gold rings and colour-flipped
+-- rims. Ink reads on a gold tile, a tan tile and a tier colour alike, and it is
+-- the screen's own rim colour (the cards and the tier pills both rim in ink).
+-- The design's gold FILLS stay: on goes gold, off goes tan.
+local function dlg_rim(x, y, w, h, fade)
+    local a = 255 * fade
+    fill_rgb(x, y, w, 3, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y + h - 3, w, 3, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y, 3, h, INK[1], INK[2], INK[3], a)
+    fill_rgb(x + w - 3, y, 3, h, INK[1], INK[2], INK[3], a)
+end
+
+local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade, fill_a)
+    fill_rect(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade)
     local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
                 (text_size or 24) >= 24 and 3 or 2)
     if t then draw_text_at(t, x + (w - t.width) / 2, y + h / 2, fade, w - 4) end
 end
 
 local function draw_filter_dialog(model, st, fade)
+    local ids = M._ids()   -- the difficulty toggles draw the real course art
     local cur = st.filter_cursor or 0
-    -- active row: 0-4 are the difficulty toggles, 5 star, 6 tier, 7 sort
-    local row_active = (cur == 5) and 1 or (cur == 6) and 2 or (cur == 7) and 3 or 0
+    -- cursor: 0-4 are the difficulty toggles, 5 star, 6 tier, 7 sort. It draws as
+    -- a rim (dlg_cursor); every fill on these rows is a VALUE, never the cursor.
 
     fill_rect(0, 0, 1920, 1080, INK, 175 * fade)                       -- scrim
     fill_rect(DLG_X, DLG_Y, DLG_W, DLG_H, INK, 255 * fade)             -- shell
@@ -557,32 +687,40 @@ local function draw_filter_dialog(model, st, fade)
     fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade)  -- header
     draw_text_at(W("FILTER/SORT", 30, INK, 3), DLG_X + 36, DLG_Y + 34, fade)
 
-    -- DIFFICULTY — on/off per course
-    dlg_row_label("DIFFICULTY", DLG_Y + 128, row_active == 0, fade)
+    -- DIFFICULTY — a gold tile means ON, a tan tile OFF; the rim marks both the
+    -- toggles that are on and the tile the cursor sits on
+    dlg_row_label("DIFFICULTY", DLG_Y + 128, fade)
     local d = st.diff or {}
     for i = 1, 5 do
         local x = DLG_X + 290 + (i - 1) * 174
         local y = DLG_Y + 96
-        local is_cursor = (cur == i - 1)
-        fill_rect(x, y, 166, 64, is_cursor and GOLD or TAN_D, 255 * fade)
-        fill_rect(x + 14, y + 15, 34, 34, TAN, 255 * fade)
-        if d[i] then fill_rect(x + 19, y + 20, 24, 24, INK, 255 * fade) end
-        local t = T(COURSE_NAME[i], 22, INK, TAN, 3)
+        local on = d[i] and true or false
+        fill_rect(x, y, 166, 64, on and GOLD or TAN_D, 255 * fade)
+        -- the toggle's real art (frame = course index) so the tile says WHICH
+        -- course it is; whether it is on is the tile fill behind the icon
+        draw_art(ids, "course", x + 31, y + 32, 34, 34, { frame = i - 1, fade = fade })
+        local t = T(COURSE_NAME[i], 22, INK, on and GOLD or TAN_D, 3)
         if t then draw_text_at(t, x + 52 + (106 - t.width) / 2, y + 32, fade) end
+        if cur == i - 1 then dlg_rim(x, y, 166, 64, fade) end
     end
 
-    -- STAR — ALL, then 1..10 (no 10+ bucket: this library tops out at ★10)
-    dlg_row_label("STAR", DLG_Y + 228, row_active == 1, fade)
+    -- STAR — ALL, then 1..10 (no 10+ bucket: this library tops out at ★10). The
+    -- chosen star keeps the design's gold fill and wears the dialog's rim; the
+    -- cursor is the same rim, spanning the row.
+    dlg_row_label("STAR", DLG_Y + 228, fade)
     local star = st.star or 0
     dlg_cell(DLG_X + 290, DLG_Y + 196, 72, 64, "ALL",
-             (cur == 5 and star == 0) and GOLD or TAN_D, INK, nil, nil, fade)
+             (star == 0) and GOLD or TAN_D, WHITE, nil, INK, fade)
     for n = 1, 10 do
         dlg_cell(DLG_X + 367 + (n - 1) * 77, DLG_Y + 196, 72, 64, tostring(n),
-                 (cur == 5 and star == n) and GOLD or TAN_D, INK, nil, nil, fade)
+                 (star == n) and GOLD or TAN_D, WHITE, nil, INK, fade)
+    end
+    if cur == 5 then
+        dlg_rim(DLG_X + 290, DLG_Y + 196, 842, 64, fade)
     end
 
     -- TIER — that level's own set (never generated: the sets are not monotonic)
-    dlg_row_label("TIER", DLG_Y + 318, row_active == 2, fade)
+    dlg_row_label("TIER", DLG_Y + 318, fade)
     local tier_cells = { "ALL" }
     if star > 0 then
         for _, tv in ipairs(model:tier_set(star)) do tier_cells[#tier_cells + 1] = tv end
@@ -599,26 +737,34 @@ local function draw_filter_dialog(model, st, fade)
         local is_cur = (st.tier == "" and tv == "ALL")
                     or (st.tier == "NONE" and tv == "None")
                     or (st.tier == tv)
-        local fillc = TAN_D
-        if tv ~= "ALL" and tv ~= "None" then fillc = TIER_C[tv] or TAN_D end
-        dlg_cell(x, DLG_Y + 296, w, 44, shown, fillc, WHITE, 22, INK, fade)
-        if is_cur then
-            -- current value: a gold ring, so the tier's own colour still reads
-            local a = 255 * fade
-            tex.draw_rect(x, DLG_Y + 296, w, 3, GOLD[1], GOLD[2], GOLD[3], a)
-            tex.draw_rect(x, DLG_Y + 337, w, 3, GOLD[1], GOLD[2], GOLD[3], a)
-            tex.draw_rect(x, DLG_Y + 296, 3, 44, GOLD[1], GOLD[2], GOLD[3], a)
-            tex.draw_rect(x + w - 3, DLG_Y + 296, 3, 44, GOLD[1], GOLD[2], GOLD[3], a)
+        -- ALL and None have no colour of their own, so they take the same yellow
+        -- fill every other row uses for its chosen value. A graded tier CANNOT:
+        -- its fill IS its identity (SSS purple, B mustard), and B's #E6B439 is
+        -- near enough to the cursor gold #FFD24A that a yellow fill would read as
+        -- one more on-state. So the chosen tier instead keeps full strength while
+        -- the unchosen ones dim against the plate.
+        local fillc, cell_a
+        if tv == "ALL" or tv == "None" then
+            fillc, cell_a = is_cur and GOLD or TAN_D, 255
+        else
+            fillc, cell_a = TIER_C[tv] or TAN_D, is_cur and 255 or 150
         end
+        dlg_cell(x, DLG_Y + 296, w, 44, shown, fillc, WHITE, 22, INK, fade, cell_a)
+    end
+    if cur == 6 then
+        dlg_rim(DLG_X + 290, DLG_Y + 296, (cx - 4) - (DLG_X + 290), 44, fade)
     end
 
-    -- SORT
-    dlg_row_label("SORT", DLG_Y + 432, row_active == 3, fade)
+    -- SORT — gold is the live sort value, the rim is the cursor (same split)
+    dlg_row_label("SORT", DLG_Y + 432, fade)
     local sort_disp = (st.sort == "A-Z") and "A–Z" or (st.sort or "A–Z")
     for i, sv in ipairs({ "SCORE", "CROWN", "A–Z", "TIER" }) do
         local x = DLG_X + 290 + (i - 1) * 216
         dlg_cell(x, DLG_Y + 396, 208, 64, sv, (sv == sort_disp) and GOLD or TAN_D,
                  WHITE, 24, INK, fade)
+    end
+    if cur == 7 then
+        dlg_rim(DLG_X + 290, DLG_Y + 396, 856, 64, fade)
     end
 
     -- footer — the live match count (a short list reads as filtered, not broken)
@@ -659,7 +805,7 @@ function M.draw(self, model)
     if ids.background then
         tex.draw_texture(ids.background, { frame = bg_frame, x = 0, y = 0 })
     else
-        tex.draw_rect(0, 0, 1920, 1080, 40, 40, 44, 255)
+        fill_rgb(0, 0, 1920, 1080, 40, 40, 44, 255)
     end
 
     -- header: art band (the design's own placeholder slot) + the open context's name
@@ -682,6 +828,7 @@ function M.draw(self, model)
 
     -- the list: the cursor row's own slot is the vertical centre of the block
     local cursor_top = TOP_ROW + CURSOR_ROW * CARD_H          -- = 532
+    local cursor_drawn = false                                -- did the cursor row paint?
     for off = MIN_OFF, MAX_OFF do
         local row = model:row(off)
         if row then
@@ -703,8 +850,24 @@ function M.draw(self, model)
             else
                 draw_pair_card(ids, row.kind, x, y, 1.0)
             end
-            if is_cursor then draw_cursor_rim(x, y, 1.0) end
+            if is_cursor then
+                draw_cursor_rim(x, y, 1.0)
+                cursor_drawn = true
+            end
         end
+    end
+
+    -- The caps overflow the cursor row: the design's board is 100 tall over an
+    -- 84px card, so they reach 8px above AND below it. This loop paints rows in
+    -- order, which means the row below the cursor lands AFTER it and clips their
+    -- bottom arms — so the caps are drawn here, once, after every row. They still
+    -- sit under the footer and the dialog, which are painted below. They belong
+    -- to the plain card alone (the DON controls strip and the change-diff picker
+    -- replace the card, and the Filter/Sort dialog covers the list) and show for
+    -- every other kind of cursor row — chart, BACK, FILTER — in both the browse
+    -- and the filtered/zero-result states.
+    if cursor_drawn and not st.selected and not st.filter_open then
+        draw_cursor_caps(CARD_X, cursor_top, 1.0)
     end
 
     draw_footer(1.0)
