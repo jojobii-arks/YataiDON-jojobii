@@ -512,15 +512,19 @@ void ProListModel::build_dan_rows() {
         std::error_code dec;
         if (!e.is_directory(dec)) continue;
         const fs::path dir = e.path();
+        const bool has_def = nav_->library_has_def_file(dir);
         std::vector<fs::path> jsons;
         collect_dan_jsons_under(dir, 2, jsons);
-        if (jsons.empty()) continue;
+        // A boxed set (an era) lists even with zero courses: the wheel lists its
+        // boxes regardless, and this library's eras 01-04 are empty yet on the
+        // wheel (Joseph 2026-10-13: "do folders to match").
+        if (jsons.empty() && !has_def) continue;
         std::sort(jsons.begin(), jsons.end(), dan_order);
 
-        const BoxDef def = nav_->library_has_def_file(dir) ? nav_->parse_box_def(dir) : BoxDef{};
+        const BoxDef def = has_def ? nav_->parse_box_def(dir) : BoxDef{};
         std::error_code lec;
         const bool own_json = fs::exists(dir / "dan.json", lec);
-        bool is_set = nav_->library_has_def_file(dir) || !own_json;
+        bool is_set = has_def || !own_json;
         if (is_set) {
             // A set (an era, or an unboxed group): one DAN_FOLDER row; its
             // courses open on the next level. The name prefers the box's title.
