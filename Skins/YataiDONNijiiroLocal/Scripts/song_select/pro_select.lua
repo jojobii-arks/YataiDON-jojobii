@@ -15,6 +15,11 @@
 --     label (icon at 33, label at 83) — FLOW 1's folder card, FLOW 2's pair.
 --   The visible list is the design's block of 9 rows, y 196..952, so the cursor
 --     row sits at y 532 (centre 574) — FLOW 1/2's composition.
+--   SELECTED state: the cursor chart's card is NOT replaced. It stays in its slot
+--     and keeps its gold cursor rim, and the five-entry DON strip (BACK /
+--     SETTINGS / PLAY / PRACTICE / CHANGE DIFF — or the CHANGE DIFF picker while
+--     it is open) draws as its own panel in the card slot directly BELOW it, y
+--     616..700 — one row's footprint, so the list keeps its flush 9-row rhythm.
 --   Left column: count pill (48,196) 380x64, the FLOW 2 chip stack at
 --     y 280/318/356, chart details (48,366) 380x336.
 --   Filter/Sort dialog: shell (360,190) 1200x700 (FLOW 5).
@@ -265,6 +270,23 @@ local function placeholder(x, y, w, h, fade)
     fill_rgb(x + w - 2, y, 2, h, INK[1], INK[2], INK[3], a)
 end
 
+-- The screen's cursor mark: a 3px ink rim inset into the element. Declared here,
+-- above every user, because it is ONE idiom for the cursor across the screen — the
+-- Filter/Sort dialog's current row and the selected chart's controls strip both
+-- use it — so nothing has to switch between gold fills, bespoke gold rings and
+-- colour-flipped rims to say where the cursor is. Ink reads on a gold tile, a tan
+-- tile and a tier colour alike, and it is the screen's own rim colour (the cards
+-- and the tier pills both rim in ink). A gold FILL means something else entirely:
+-- an option that is ON (the dialog's difficulty toggles, its chosen star / tier /
+-- sort). Nothing in the controls strip is a toggle, so nothing in it fills gold.
+local function dlg_rim(x, y, w, h, fade)
+    local a = 255 * fade
+    fill_rgb(x, y, w, 3, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y + h - 3, w, 3, INK[1], INK[2], INK[3], a)
+    fill_rgb(x, y, 3, h, INK[1], INK[2], INK[3], a)
+    fill_rgb(x + w - 3, y, 3, h, INK[1], INK[2], INK[3], a)
+end
+
 -- ------------------------------------------------------------------- ids
 local function resolve_ids(t)
     t.background   = tex.get_texture("song_select/box/background")
@@ -425,8 +447,13 @@ end
 
 -- the DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch.
 -- Colours and stations off the Penpot strip render: the plate is the dialog's
--- TAN_D and a resting tile is TAN (the old ink plate + TAN_D tiles sat a step too
--- dark, so the strip read as a row of chocolate buttons), the current tile GOLD.
+-- TAN_D and every tile is TAN (the old ink plate + TAN_D tiles sat a step too
+-- dark, so the strip read as a row of chocolate buttons). This strip is no longer
+-- drawn in the selected card's own slot — it is its own panel BELOW that card (see
+-- draw_pro) — so the current tile is marked with the screen's cursor rim, dlg_rim,
+-- and NOT with a gold fill: with the strip standing alone a gold tile would read
+-- as an option that is ON, which nothing here is. The tile fill stays TAN and the
+-- label keeps the size/thickness step that says which entry the cursor is on.
 -- BACK / SETTINGS / CHANGE DIFF carry their real badge art — a 32x32 mark on the
 -- centre the flat square used to occupy — and their labels centre at the design's
 -- tx+138, not the tile centre: an icon tile pushes its label ~7px right (PLAY and
@@ -437,19 +464,19 @@ local function draw_controls(ids, st, x, y, fade)
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        local tile = is_cur and GOLD or TAN
-        fill_rect(tx, y + 11, 262, 60, tile, 255 * fade)
+        fill_rect(tx, y + 11, 262, 60, TAN, 255 * fade)
+        if is_cur then dlg_rim(tx, y + 11, 262, 60, fade) end
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
             -- 32x32 station; the outline is the tile's own colour so the label
-            -- reads as bare ink (the design shows no halo on either fill)
+            -- reads as bare ink (the design shows no halo on the tan fill)
             local extra = { fade = fade }
             if CONTROL_ART[i] == "course" then extra.frame = 4 end   -- URA = the purple oni
             draw_art(ids, CONTROL_ART[i], tx + 33, cy, 32, 32, extra)
             label_x, label_w = tx + 66, 145
         end
-        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, tile,
+        draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, INK, TAN,
                       is_cur and 4 or 3, label_x, y + 11, label_w, 60, fade)
     end
 end
@@ -653,21 +680,12 @@ local function dlg_row_label(text2, cy, fade)
     draw_text_at(W(text2, 26, INK, 3), DLG_X + 40, cy, fade)
 end
 
--- ONE border for the whole dialog. A 3px ink rim inset into the element marks the
--- cursor AND every chosen / on state — the difficulty toggles that are on, the
--- chosen star, tier and sort values — so the dialog speaks a single vocabulary
--- instead of switching between gold fills, bespoke gold rings and colour-flipped
--- rims. Ink reads on a gold tile, a tan tile and a tier colour alike, and it is
--- the screen's own rim colour (the cards and the tier pills both rim in ink).
--- The design's gold FILLS stay: on goes gold, off goes tan.
-local function dlg_rim(x, y, w, h, fade)
-    local a = 255 * fade
-    fill_rgb(x, y, w, 3, INK[1], INK[2], INK[3], a)
-    fill_rgb(x, y + h - 3, w, 3, INK[1], INK[2], INK[3], a)
-    fill_rgb(x, y, 3, h, INK[1], INK[2], INK[3], a)
-    fill_rgb(x + w - 3, y, 3, h, INK[1], INK[2], INK[3], a)
-end
-
+-- The dialog draws ONE border style: dlg_rim (the shared cursor mark, defined
+-- with the other pieces) marks the cursor AND every chosen / on state — the
+-- difficulty toggles that are on, the chosen star, tier and sort values — so the
+-- dialog speaks a single vocabulary instead of switching between gold fills,
+-- bespoke gold rings and colour-flipped rims. The design's gold FILLS stay: on
+-- goes gold, off goes tan.
 local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade, fill_a)
     fill_rect(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade)
     local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
@@ -836,14 +854,15 @@ function M.draw(self, model)
             local y = cursor_top + off * CARD_H
             local is_cursor = (off == 0)
             if row.kind == "chart" then
-                if is_cursor and st.selected and st.picker_open then
-                    draw_picker(ids, model, st, x, y, 1.0)
-                elseif is_cursor and st.selected then
-                    draw_controls(ids, st, x, y, 1.0)
-                else
-                    local info = model:info(off)
-                    if info then draw_chart_card(ids, info, x, y, 1.0) end
-                end
+                -- A CHART row ALWAYS draws its own card, selected or not. The
+                -- selected state's submenu is a SEPARATE panel in the card slot
+                -- below (see the block after this loop), so the chart you are
+                -- acting on keeps its slot and its look — the same card, the same
+                -- gold cursor rim — and the list never loses it in place.
+                -- `info` is resolve_display, so a committed CHANGE DIFF swap shows
+                -- on the card here exactly as it already does in the details panel.
+                local info = model:info(off)
+                if info then draw_chart_card(ids, info, x, y, 1.0) end
             elseif row.kind == "folder" or row.kind == "search" or row.kind == "recent"
                 or row.kind == "favorite" or row.kind == "all" then
                 draw_folder_card(ids, row, x, y, 1.0)
@@ -857,15 +876,49 @@ function M.draw(self, model)
         end
     end
 
+    -- The selected chart's submenu — BACK / SETTINGS / PLAY / PRACTICE / CHANGE
+    -- DIFF, or the CHANGE DIFF picker while it is open — drawn as its own panel in
+    -- the card slot DIRECTLY BELOW the cursor card (the card itself stays put
+    -- above). "Below" is read as the next slot of the list, not as a gap and not as
+    -- a push:
+    --   * the rows are FLUSH at an 84px pitch with no gap to sit in (the design's
+    --     block of 9), so a gap reading does not exist;
+    --   * pushing the rows below down would shove the bottom row of the block into
+    --     the footer hints, and it would break the list's own composition;
+    --   * the slot below is the row nearest the card you are acting on, and the
+    --     panel fills that WHOLE slot (the ink footprint below, then the strip's own
+    --     plate inset 11 inside it), so the panel occupies exactly one row's
+    --     footprint: the list keeps its flush 9-row rhythm, the card keeps its
+    --     slot, and only the single adjacent row is covered. The plate is inset
+    --     (11,4) inside that footprint, so without the ink fill behind it the row
+    --     below would show through in an 11px column down each side.
+    -- Room: the cursor row is PINNED — TOP_ROW + CURSOR_ROW * CARD_H is a constant,
+    -- so the card is always at y 532 and this panel always at 616..700, well clear
+    -- of the screen bottom, wherever the cursor is in the list. The guard below is
+    -- for a future layout that moves the pinned row (or a hand-authored contrast):
+    -- it flips the panel ABOVE the card rather than letting it run off-screen.
+    if st.selected then
+        local sub_y = cursor_top + CARD_H
+        if sub_y + CARD_H > 1014 then sub_y = cursor_top - CARD_H end
+        fill_rect(CARD_X, sub_y, CARD_W, CARD_H, INK, 255)
+        if st.picker_open then
+            draw_picker(ids, model, st, CARD_X, sub_y, 1.0)
+        else
+            draw_controls(ids, st, CARD_X, sub_y, 1.0)
+        end
+    end
+
     -- The caps overflow the cursor row: the design's board is 100 tall over an
     -- 84px card, so they reach 8px above AND below it. This loop paints rows in
     -- order, which means the row below the cursor lands AFTER it and clips their
     -- bottom arms — so the caps are drawn here, once, after every row. They still
     -- sit under the footer and the dialog, which are painted below. They belong
-    -- to the plain card alone (the DON controls strip and the change-diff picker
-    -- replace the card, and the Filter/Sort dialog covers the list) and show for
-    -- every other kind of cursor row — chart, BACK, FILTER — in both the browse
-    -- and the filtered/zero-result states.
+    -- to the plain card alone: the Filter/Sort dialog covers the list, and in the
+    -- selected state the submenu panel occupies the card slot immediately below,
+    -- which the caps' own bottom arms (8px past the card) would land on — so the
+    -- selected state suppresses them and the card's gold cursor rim is what marks it.
+    -- They show for every other kind of cursor row — chart, BACK, FILTER — in both
+    -- the browse and the filtered/zero-result states.
     if cursor_drawn and not st.selected and not st.filter_open then
         draw_cursor_caps(CARD_X, cursor_top, 1.0)
     end
