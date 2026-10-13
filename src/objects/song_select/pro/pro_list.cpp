@@ -109,6 +109,9 @@ bool ProListModel::chart_passes_filter(const fs::path& song_path, int course, in
     if (level < 1 || level > 10) return false;       // -1 = course absent
     if (!filter_.diff[course]) return false;
     if (filter_.star != 0 && level != filter_.star) return false;
+    // "" (ALL) is a deliberate no-op: it admits tiered AND tier-less charts, so
+    // ALL never hides the charts that have no tier (settled 2026-10-13). Only a
+    // NONE or letter value restricts the list.
     if (!filter_.tier.empty()) {
         const std::string& t = tier;
         if (filter_.tier == "NONE") {
