@@ -16,10 +16,9 @@
 --     6px seams, 14px inner padding.
 --   FOLDER / BACK / FILTER card: ONE plate (11,11,1374,62), name or an icon +
 --     label (icon at 33, label at 83) — FLOW 1's folder card, FLOW 2's pair.
---   The list FILLS the column: 10 slots, y 196..1032, the cursor riding inside the
---     window — mid-list it still sits at y 532 (slot 4), but at the top of a list
---     the rows start at the very top of the block and at the end the cursor walks
---     down to the bottom slot (Joseph 2026-10-13: use the whole vertical space).
+-- The list fills the column: 10 slots, y 196..1032, the cursor PINNED at y 532
+-- (its own slot, four rows above it and five below) with the list scrolling
+-- under it — Joseph 2026-10-13: keep the pin, just show more rows.
 --   SELECTED state: the cursor chart's card is NOT replaced. It stays in its slot
 --     and the five-entry DON section (BACK / SETTINGS / PLAY / PRACTICE / CHANGE
 --     DIFF — or the CHANGE DIFF picker while it is open) UNFOLDS as part of that
@@ -54,10 +53,9 @@ local CARD_GAP = 4
 local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
 local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
--- The list fills the column (Joseph 2026-10-13): ten slots from 196 to 1032, the
--- cursor riding INSIDE the window — four slots above it once it passes slot 4, so
--- mid-list it still sits at the old y 532, but at the top of a list the rows start
--- at the very top of the block instead of leaving blank slots above a pinned cursor.
+-- The window is ten slots now (Joseph 2026-10-13: use the whole vertical space,
+-- keep the cursor PINNED): y 196..1032 — four rows above the pinned cursor and five
+-- below. The pin is untouched; only the window grew.
 local MIN_OFF, MAX_OFF = -4, 5               -- 10 slots, y 196..1032
 local SUB_H = 84                             -- the section's block: one CARD_H pitch
 local SUB_PLATE_H, SUB_TILE_H = 62, 60       -- its plate / tile heights (the strip's own)
@@ -420,10 +418,11 @@ end
 -- past the card top and bottom (100 tall). The design's 13px outer-corner radius
 -- is NOT drawn: the engine exposes no rounded variant of the fill path, so the
 -- brackets are straight-edged.
-local function draw_cursor_caps(x, y, fade, ov)
+local function draw_cursor_caps(x, y, fade, ov, h)
     ov = ov or 5
-    clamp_cap(x, y, CARD_IN, true, fade, CLAMP_ARM_MAX, ov, 13)
-    clamp_cap(x + CARD_W, y, CARD_IN, false, fade, CLAMP_ARM_MAX, ov, 13)
+    h  = h or CARD_IN
+    clamp_cap(x, y, h, true, fade, CLAMP_ARM_MAX, ov, 13)
+    clamp_cap(x + CARD_W, y, h, false, fade, CLAMP_ARM_MAX, ov, 13)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
@@ -505,20 +504,21 @@ local function draw_pair_card(ids, kind, x, y, fade)
     draw_text_at(W(label, 30, INK, 5), x + 83, cy, fade, 800)
 end
 
--- The selected card's own section, unfolding beneath it: the SAME two tones as the
--- card (genre band frame, band's light panel inside) and no gap between the card
--- and the section, so card + section read as one piece (Joseph 2026-10-13). The
--- rows below the cursor are pushed down by CARD_IN in draw_pro to open the room.
+-- The selected card's own section, unfolding beneath it as part of it (Joseph
+-- 2026-10-13). It wears the DARKER of the card's two tones — the genre's saturated
+-- band — so the unfolded block reads as the card's dark footer, and the options
+-- inside it are BUTTONS in the card's own light panel tone sitting on that band.
+-- The section's slot is taken out of the row window in draw_pro, so it never
+-- covers a chart.
 local function draw_section_shell(band, x, y, fade)
     fill_rect(x, y, CARD_W, SUB_H, band, 255 * fade)
-    fill_rect(x + 11, y + 11, 1374, SUB_PLATE_H, panel_of(band), 255 * fade)
 end
 
--- The DON section's entries: five 262x58 tiles at a 276 pitch. Each tile is a soft
--- wash of the section's own band over its light panel, so the tiles read as tiles
--- without a second palette, and every label is white-filled with the genre's rim
+-- The DON section's entries: five 262x60 BUTTONS at a 276 pitch, each a plate in the card's own LIGHT
+panel tone sitting on the section's dark band, so they read as buttons living
+-- inside the card. Every label is white-filled with the genre's rim
 -- colour as the stroke — the skin's house style on a light board panel. The current
--- tile is marked by the screen's cursor clamp and NOT by a gold fill (a gold fill
+-- button is marked by the screen's cursor clamp and NOT by a gold fill (a gold fill
 -- would read as an option that is ON, which nothing here is); the label keeps the
 -- size/thickness step as well. The clamp is drawn AFTER the row — its ink sits 3px
 -- proud of the tile, which the next tile must not paint over. BACK / SETTINGS /
@@ -531,7 +531,7 @@ local function draw_controls(ids, st, x, y, fade, band, stroke)
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        fill_rect(tx, y + 11, 262, SUB_TILE_H, rgba(band, 62), 255 * fade)
+        fill_rect(tx, y + 11, 262, SUB_TILE_H, panel_of(band), 255 * fade)
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
@@ -570,10 +570,10 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
         local cell = cells[i] or {}
         local present = cell.has_course and true or false
         local is_cur = present and ((st.picker or 0) + 1) == i
-        -- A present segment wears the tan plate; an ABSENT one is washed out to
-        -- ink so it reads as disabled — the cursor never lands on it (skipped in
-        -- move_picker), and the commit refuses it.
-        fill_rect(sx, seg_top, 262, SUB_TILE_H, present and rgba(band, 62) or rgba(INK, 70), 255 * fade)
+        -- A present segment is one of the section's light BUTTONS; an ABSENT one is
+        -- inked out so it reads as disabled — the cursor never lands on it (skipped
+        -- in move_picker), and the commit refuses it.
+        fill_rect(sx, seg_top, 262, SUB_TILE_H, present and panel_of(band) or rgba(INK, 90), 255 * fade)
         if is_cur then cur_x = sx end            -- the clamp, drawn after the row:
                                                  -- on the ink plate its outline is
                                                  -- invisible and the gold bracket
@@ -1027,36 +1027,27 @@ function M.draw(self, model)
     local nchips = draw_chips(st, LX, 1.0)
     draw_details(ids, model, st, LX, (nchips >= 3) and 394 or 366, 1.0)
 
-    -- THE LIST — ten slots, 196..1032, the cursor riding inside the window: the
-    -- window only moves when the cursor would leave it, so a fresh list starts at
-    -- the very top of the block and the last screen of a list walks the cursor down
-    -- to the bottom slot. Row LOADING is untouched — this is the drawing window
-    -- only: the model still builds its rows in its own budgeted, cursor-driven
-    -- steps and the view fetches just the slots it paints (lazy, as ever).
-    local SLOTS  = MAX_OFF - MIN_OFF + 1                    -- 10
-    local slots  = st.selected and (SLOTS - 1) or SLOTS      -- the section takes one
-    local cur    = st.cursor or 0
-    local count  = st.rows or 0
-    local first  = math.max(0, math.min(cur + MIN_OFF, math.max(0, count - slots)))
-    local s_cur  = cur - first                               -- the cursor's own slot
-    local cursor_top = TOP_ROW + s_cur * CARD_H
+    -- THE LIST — the cursor is PINNED to its own slot (TOP_ROW + CURSOR_ROW *
+    -- CARD_H = 532, the block's centre) and the list scrolls under it, exactly as
+    -- before; the window is just BIGGER now (Joseph 2026-10-13: keep the pin, show
+    -- more rows). Ten slots, y 196..1032: four above the cursor, five below, so the
+    -- column is used end to end. Row LOADING is untouched — this is the drawing
+    -- window only: the model still builds its rows in its own budgeted,
+    -- cursor-driven steps and the view fetches just the slots it paints.
+    local cursor_top = TOP_ROW + CURSOR_ROW * CARD_H          -- = 532
     local cursor_drawn = false                               -- did the cursor row paint?
-    for s = 0, math.min(slots, count) - 1 do
-        local idx = first + s
-        -- row() / info() take a CURSOR-RELATIVE offset and WRAP like the list, so a
-        -- slot above the cursor has to be asked for as the positive wrapped offset
-        -- (idx - cur + count): the raw negative offset would wrap to the END of the
-        -- list and paint the wrong rows into the window's top slots.
-        local off = idx - cur
-        if off < 0 then off = off + count end
+    -- The selected card's section unfolds straight under it and takes SUB_H (one
+    -- CARD_H slot) of room, so every row BELOW the cursor shifts down by that much
+    -- and the last drawn row still lands inside the screen — which is why MAX_OFF
+    -- drops by one in the selected state. The rows above the cursor never move.
+    local sec_h  = st.selected and SUB_H or 0
+    local last   = st.selected and (MAX_OFF - 1) or MAX_OFF
+    for off = MIN_OFF, last do
         local row = model:row(off)
         if row then
             local x = CARD_X
-            -- the selected card's section takes the slot right below the cursor, so
-            -- every row past the cursor draws one slot further down
-            local sidx = (st.selected and idx > cur) and (s + 1) or s
-            local y = TOP_ROW + sidx * CARD_H
-            local is_cursor = (idx == cur)
+            local y = cursor_top + off * CARD_H + ((off > 0) and sec_h or 0)
+            local is_cursor = (off == 0)
             if row.kind == "chart" then
                 -- A CHART row ALWAYS draws its own card, selected or not: the chart
                 -- you are acting on keeps its slot and its look (the clamp marks it)
@@ -1078,13 +1069,14 @@ function M.draw(self, model)
     -- The selected chart's OWN section — BACK / SETTINGS / PLAY / PRACTICE /
     -- CHANGE DIFF, or the CHANGE DIFF picker while it is open — unfolding beneath
     -- that card as PART OF IT (Joseph 2026-10-13): it begins at the card's own
-    -- bottom edge with no gap and wears the card's own two tones — the genre's
-    -- saturated band frame and the band's light panel — so card + section read as
-    -- one piece, the card's bottom ring doubling as the divider between the two
-    -- plate areas. It is exactly one SUB_H block tall, so the first row after it
-    -- resumes on the next slot boundary with the list's normal 4px gap; the slot it
-    -- occupies was taken out of the row loop's window above, so the section never
-    -- covers a chart and nothing is ever drawn twice.
+    -- bottom edge with no gap and wears the DARKER of the card's two tones — the
+    -- genre's saturated band — with the five options drawn as BUTTONS in the card's
+    -- light panel tone sitting on it, so the unfolded block reads as the card's own
+    -- dark footer and the options read as buttons inside the card. The card's bottom
+    -- ring doubles as the divider. It is exactly one SUB_H block tall and the rows
+    -- below the cursor were shifted down by sec_h in the loop above, so the section
+    -- never covers a chart. In the selected state the cursor's C clamp stretches
+    -- over the card AND the section (CARD_IN + SUB_H), gripping the block as one.
     if st.selected then
         local info = model:info(0)
         local frame = (info and REF[info.genre_index]) or 0
@@ -1103,15 +1095,18 @@ function M.draw(self, model)
     -- bottom arms — so the caps are drawn here, once, after every row. They still
     -- sit under the footer and the dialog, which are painted below. They belong
     -- to the plain card alone: the Filter/Sort dialog covers the list, and in the
-    -- selected state the selected card's section unfolds immediately below (no
-    -- gap), so the caps drop their overhang there and sit flush with the card.
+    -- selected state the clamp stretches over the card AND its unfolded section
+    -- (CARD_IN + SUB_H) with no overhang, so it grips the whole block.
     -- They show for every cursor row — chart, BACK, FILTER — in the browse state,
     -- the filtered/zero-result states, AND the selected state (since 2026-10-13 the
     -- selected card's gold rim is gone, so the clamp IS the marker there too); in
     -- the selected state the overhang is 0 so the arms sit flush with the card and
     -- never land on the section unfolding below it.
     if cursor_drawn and not st.filter_open then
-        draw_cursor_caps(CARD_X, cursor_top, 1.0, st.selected and 0 or nil)
+        -- selected: the clamp spans the WHOLE unfolded block (the card plus its
+        -- section) and sits flush, so it grips the card-and-section as one piece
+        draw_cursor_caps(CARD_X, cursor_top, 1.0, st.selected and 0 or nil,
+                         st.selected and (CARD_IN + SUB_H) or nil)
     end
 
     -- No control-hint footer (removed at Joseph's request). The SELECT/DECIDE
