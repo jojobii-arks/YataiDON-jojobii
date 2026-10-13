@@ -6,6 +6,7 @@
 #include "file_navigator/genre_bg.h"
 #include "player.h"
 #include "diff_sort.h"
+#include "pro/pro_list.h"
 
 SongSelectScript::SongSelectScript() {
     if (!load("SongSelect", "song_select")) return;
@@ -20,7 +21,8 @@ SongSelectScript::SongSelectScript() {
     fn_draw_genre_bg     = lua_object["draw_genre_bg"];
     fn_draw_selector     = lua_object["draw_selector"];
     fn_draw_option_panel = lua_object["draw_option_panel"];
-    fn_draw_sort_window  = lua_object["draw_sort_window"];
+        fn_draw_sort_window  = lua_object["draw_sort_window"];
+        fn_draw_pro          = lua_object["draw_pro"];
 }
 
 double SongSelectScript::animation_ms() {
@@ -111,5 +113,11 @@ bool SongSelectScript::draw_option_panel(SongSelectPlayer* player, int kind) {
 bool SongSelectScript::draw_sort_window(DiffSortSelect* window) {
     if (!fn_draw_sort_window.valid()) return false;
     call(fn_draw_sort_window, "SongSelect:draw_sort_window", window);
+    return true;
+}
+
+bool SongSelectScript::draw_pro(ProListModel* model) {
+    if (!fn_draw_pro.valid()) return false;
+    call(fn_draw_pro, "SongSelect:draw_pro", model);
     return true;
 }

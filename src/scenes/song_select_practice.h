@@ -4,6 +4,7 @@
 class PracticeSongSelectScreen : public SongSelectScreen {
 protected:
     Screens get_game_screen_target() override { return Screens::GAME_PRACTICE; }
+    Screens play_origin() override { return Screens::PRACTICE_SELECT; }
     bool hides_dan() override { return true; }
     bool allows_second_player_join() override { return false; }
 

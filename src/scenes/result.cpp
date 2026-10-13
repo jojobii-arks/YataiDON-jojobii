@@ -99,7 +99,10 @@ std::optional<Screens> ResultScreen::update() {
                 return on_screen_end(Screens::GAME_OVER);
             }
             global_data.returned_from_result = true;
-            return on_screen_end(Screens::SONG_SELECT);
+                        // returns-after-song: pro (and any future origin) gets its screen back;
+                        // -1 keeps the wheel's own target.
+                        const int origin = global_data.session_data[(int)global_data.player_num].origin_screen;
+                        return on_screen_end(origin >= 0 ? (Screens)origin : Screens::SONG_SELECT);
         }
     }
     return std::nullopt;

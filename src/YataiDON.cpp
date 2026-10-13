@@ -54,6 +54,7 @@
 #include "scenes/song_select.h"
 #include "scenes/song_select_2p.h"
 #include "scenes/song_select_practice.h"
+#include "scenes/song_select_pro.h"
 #include "scenes/title.h"
 #include "scenes/game_over.h"
 
@@ -122,13 +123,14 @@ static std::optional<Screens> screen_from_name(const std::string& raw) {
         else if (c == '-' || c == ' ') c = '_';
         name.push_back(c);
     }
-    for (int i = 0; i <= static_cast<int>(Screens::GAME_DRILL); i++) {
+    for (int i = 0; i <= static_cast<int>(Screens::PRO_SELECT); i++) {
         Screens s = static_cast<Screens>(i);
         if (screens_to_string(s) == name) return s;
     }
     if (name == "SONGS") return Screens::SONG_SELECT;
     if (name == "MENU")  return Screens::ENTRY;
     if (name == "DAN")   return Screens::DAN_SELECT;
+    if (name == "PRO")   return Screens::PRO_SELECT;
     return std::nullopt;
 }
 
@@ -407,6 +409,7 @@ static void populate_screens(std::unordered_map<Screens, std::unique_ptr<Screen>
     if (except != Screens::GAME_2P)         screens[Screens::GAME_2P]         = std::make_unique<Game2PScreen>();
     if (except != Screens::GAME_PRACTICE)   screens[Screens::GAME_PRACTICE]   = std::make_unique<PracticeGameScreen>();
     if (except != Screens::PRACTICE_SELECT) screens[Screens::PRACTICE_SELECT] = std::make_unique<PracticeSongSelectScreen>();
+    if (except != Screens::PRO_SELECT)      screens[Screens::PRO_SELECT]      = std::make_unique<ProSongSelectScreen>();
     if (except != Screens::RESULT)          screens[Screens::RESULT]          = std::make_unique<ResultScreen>();
     if (except != Screens::RESULT_2P)       screens[Screens::RESULT_2P]       = std::make_unique<Result2PScreen>();
     if (except != Screens::DAN_SELECT)      screens[Screens::DAN_SELECT]      = std::make_unique<DanSelectScreen>();
@@ -656,36 +659,35 @@ static void run_frame() {
                 std::chrono::duration<double>(s));
         };
         if (!shot_done) {
-            if (!on_target) {
-                armed = false;
+            const auto now = std::chrono::steady_clock::now();
+            if (!armed) {
+                // Wait until the target screen has appeared and its transition
+                // finished before touching input: pressing during a fade or
+                // while the navigator is still loading gets the press swallowed
+                // and makes the run non-reproducible. Once the sequence has
+                // started it may walk across screens (e.g. ENTRY -> pro
+                // select); the shot fires when the sequence is done and the
+                // final state has settled, wherever that walk ended.
+                if (on_target && L.screen_fade_start == 0.0) {
+                    armed = true;
+                    arm_time = now;
+                    last_key_time = now;
+                }
             } else {
-                const auto now = std::chrono::steady_clock::now();
-                if (!armed) {
-                    // Wait until the screen transition has finished before
-                    // touching input: pressing during a fade or while the
-                    // navigator is still loading gets the press swallowed and
-                    // makes the run non-reproducible.
-                    if (L.screen_fade_start == 0.0) {
-                        armed = true;
-                        arm_time = now;
-                        last_key_time = now;
-                    }
-                } else {
-                    // Walk to the state we want to photograph, one input at a time.
-                    if (key_index < g_dev.keys.size() && now - last_key_time >= seconds(g_dev.key_gap_seconds)) {
-                        dev_inject_input(g_dev.keys[key_index]);
-                        spdlog::info("dev: injected '{}' ({}/{})", g_dev.keys[key_index],
-                                     key_index + 1, g_dev.keys.size());
-                        key_index++;
-                        last_key_time = now;
-                        arm_time = now;
-                    }
-                    if (key_index >= g_dev.keys.size() && now - arm_time >= seconds(g_dev.shot_wait_seconds)) {
-                        save_screenshot(g_dev.shot_path, L.current_screen);
-                        shot_done = true;
-                        spdlog::info("dev: screenshot written to {}", g_dev.shot_path);
-                        if (g_dev.exit_after_shot) g_dev.quit = true;
-                    }
+                // Walk to the state we want to photograph, one input at a time.
+                if (key_index < g_dev.keys.size() && now - last_key_time >= seconds(g_dev.key_gap_seconds)) {
+                    dev_inject_input(g_dev.keys[key_index]);
+                    spdlog::info("dev: injected '{}' ({}/{})", g_dev.keys[key_index],
+                                 key_index + 1, g_dev.keys.size());
+                    key_index++;
+                    last_key_time = now;
+                    arm_time = now;
+                }
+                if (key_index >= g_dev.keys.size() && now - arm_time >= seconds(g_dev.shot_wait_seconds)) {
+                    save_screenshot(g_dev.shot_path, L.current_screen);
+                    shot_done = true;
+                    spdlog::info("dev: screenshot written to {}", g_dev.shot_path);
+                    if (g_dev.exit_after_shot) g_dev.quit = true;
                 }
             }
         }

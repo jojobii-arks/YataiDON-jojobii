@@ -149,6 +149,19 @@ struct DrillConfig {
     int note_spacing = 8;
 };
 
+// Pro select v2 view settings, persisted as [pro]. Machine-global on purpose:
+// 1P and 2P share one set of view settings (SPEC 3).
+struct ProViewConfig {
+    bool diff_easy = true;
+    bool diff_normal = true;
+    bool diff_hard = true;
+    bool diff_oni = true;
+    bool diff_ura = true;
+    int star = 0;                 // 0 = ALL, else 1..10
+    std::string tier = "";        // "" = ALL, "NONE", else a tier letter
+    std::string sort = "ALPHA";   // SCORE | CROWN | ALPHA | TIER
+};
+
 struct Config {
     GeneralConfig general;
     CardReaderConfig card_reader;
@@ -165,7 +178,8 @@ struct Config {
     VideoConfig video;
     HiddenConfig hidden;
     DrillConfig drill;
-};
+        ProViewConfig pro;
+    };
 
 std::string getKeyString(int key_code);
 

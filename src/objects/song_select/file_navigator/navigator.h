@@ -234,6 +234,27 @@ public:
     std::optional<fs::path> find_song_by_title(const std::string& title, const std::string& subtitle);
     size_t song_file_count() const { return song_files.size(); }
 
+    // ---- Library read access (pro select) -----------------------------------
+    // Read-only views of the startup scan's tables, for pro's list model. The
+    // navigator stays their only owner and writer (the scan thread fills them
+    // before song_files_ready flips), so pro reads the library through these
+    // instead of keeping a second copy that could disagree with the wheel.
+    // Safe to call once the scan has finished (preload + wait_for_song_files).
+    const std::unordered_map<std::string, std::array<int, 5>>& library_song_levels() const { return song_levels; }
+    const std::unordered_map<std::string, std::vector<std::string>>& library_song_tier_keys() const { return song_tier_keys; }
+    const std::map<std::pair<std::string, std::string>, fs::path>& library_song_files() const { return song_files; }
+    const std::unordered_map<std::string, std::string>& library_song_search_text() const { return song_search_text; }
+    const std::unordered_map<std::string, fs::path>& library_title_subtitle_index() const { return title_subtitle_index; }
+        const std::unordered_map<std::string, fs::path>& library_title_only_index() const { return title_only_index; }
+        const std::vector<std::pair<std::string, fs::path>>& library_normalized_titles() const { return normalized_titles; }
+        // Collection side of the seam (pro select): the favourite membership set
+        // and the RECENT / FAVORITE folders' own song_list.txt order.
+        const std::set<std::string>& library_favorite_songs() const { return favorite_songs; }
+        const std::optional<fs::path>& library_recent_folder_path() const { return recent_folder_path; }
+        const std::optional<fs::path>& library_favorite_folder_path() const { return favorite_folder_path; }
+        // has_def_file warms its caches; still safe to call on the const seam.
+        bool library_has_def_file(const fs::path& path) const { return const_cast<Navigator*>(this)->has_def_file(path); }
+
     void move_left();
     void move_right();
     void skip_left();
@@ -276,5 +297,9 @@ public:
     static constexpr double kSwapDelayMs = (114.0 - 45.0) / 60.0 * 1000.0;
     bool swap_is_early(int begin_id) const;
 };
+
+// The navigator's own query folding (full-width fold, lowercase, kanji fold) —
+// exposed so pro's SEARCH context folds queries exactly like the wheel does.
+std::string search_fold(const std::string& s);
 
 extern Navigator navigator;

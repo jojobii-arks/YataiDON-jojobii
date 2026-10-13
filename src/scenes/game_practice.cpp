@@ -294,8 +294,11 @@ std::optional<Screens> PracticeGameScreen::handle_menu_action(PracticeMenu::Acti
             if (song_music.has_value()) audio.stop_sound(song_music.value());
             return on_screen_end(Screens::ENTRY);
         case PracticeMenu::Action::ANOTHER_SONG:
-            if (song_music.has_value()) audio.stop_sound(song_music.value());
-            return on_screen_end(Screens::PRACTICE_SELECT);
+                    if (song_music.has_value()) audio.stop_sound(song_music.value());
+                    {
+                        const int origin = global_data.session_data[(int)global_data.player_num].origin_screen;
+                        return on_screen_end(origin >= 0 ? (Screens)origin : Screens::PRACTICE_SELECT);
+                    }
         case PracticeMenu::Action::RESTART:
             restart_practice();
             return std::nullopt;
@@ -496,11 +499,12 @@ std::optional<Screens> PracticeGameScreen::global_keys_practice() {
     }
 
     if (check_key_pressed(global_data.config->keys.back_key)) {
-        if (song_music.has_value()) {
-            audio.stop_sound(song_music.value());
+            if (song_music.has_value()) {
+                audio.stop_sound(song_music.value());
+            }
+            const int origin = global_data.session_data[(int)global_data.player_num].origin_screen;
+            return on_screen_end(origin >= 0 ? (Screens)origin : Screens::PRACTICE_SELECT);
         }
-        return on_screen_end(Screens::PRACTICE_SELECT);
-    }
 
     PlayerNum other_player = (global_data.player_num == PlayerNum::P1) ? PlayerNum::P2 : PlayerNum::P1;
     int other_idx  = (int)other_player - 1;

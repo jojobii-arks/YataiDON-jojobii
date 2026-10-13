@@ -424,9 +424,22 @@ Config get_config() {
         config.drill.total_notes = (int)drill_node["total_notes"].value_or(100);
         config.drill.note_spacing = (int)drill_node["note_spacing"].value_or(8);
         config.drill = normalize_drill_config(config.drill);
-    }
+            }
 
-    // Parse keys_1p
+            // [pro] — pro select v2 view settings (absent node keeps the defaults).
+            {
+                auto pro_node = config_file["pro"];
+                config.pro.diff_easy   = pro_node["diff_easy"].value_or(true);
+                config.pro.diff_normal = pro_node["diff_normal"].value_or(true);
+                config.pro.diff_hard   = pro_node["diff_hard"].value_or(true);
+                config.pro.diff_oni    = pro_node["diff_oni"].value_or(true);
+                config.pro.diff_ura    = pro_node["diff_ura"].value_or(true);
+                config.pro.star        = (int)pro_node["star"].value_or(0);
+                config.pro.tier        = pro_node["tier"].value_or(std::string(""));
+                config.pro.sort        = pro_node["sort"].value_or(std::string("ALPHA"));
+            }
+
+            // Parse keys_1p
     config.keys_1p.left_kat  = parseKeyArrayOrDefault(config_file, "keys_1p", "left_kat",  {ray::KEY_D});
     config.keys_1p.left_don  = parseKeyArrayOrDefault(config_file, "keys_1p", "left_don",  {ray::KEY_F});
     config.keys_1p.right_don = parseKeyArrayOrDefault(config_file, "keys_1p", "right_don", {ray::KEY_J});
@@ -677,10 +690,21 @@ void save_config(const Config& config) {
         {"timer_sec", config.drill.timer_sec},
         {"metronome", config.drill.metronome},
         {"total_notes", config.drill.total_notes},
-        {"note_spacing", config.drill.note_spacing}
-    });
+                {"note_spacing", config.drill.note_spacing}
+            });
 
-    fs::path tmp_path = config_path;
+            config_table.insert("pro", toml::table{
+                {"diff_easy", config.pro.diff_easy},
+                {"diff_normal", config.pro.diff_normal},
+                {"diff_hard", config.pro.diff_hard},
+                {"diff_oni", config.pro.diff_oni},
+                {"diff_ura", config.pro.diff_ura},
+                {"star", config.pro.star},
+                {"tier", config.pro.tier},
+                {"sort", config.pro.sort}
+            });
+
+            fs::path tmp_path = config_path;
     tmp_path += ".tmp";
     {
         std::error_code rm_ec;

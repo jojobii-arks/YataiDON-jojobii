@@ -35,6 +35,17 @@ void BoxManager::build_board_list() {
         box_locations.push_back(Screens::DAN_SELECT);
         boxes.push_back(std::make_unique<Box>(dan_text, font_size, Screens::DAN_SELECT));
     }
+    // Pro select: opt-in per skin via an "entry_pro" text key, looked up by
+    // name because the SC enum is generated from the parent skin's config --
+    // which dev worktrees read read-only -- so a new board arrives through its
+    // text key. Blank/absent text leaves the board out, like the dan board.
+    if (const SkinInfo* entry_pro = tex.skin_entry("entry_pro")) {
+        auto pro_text = entry_pro->text.find(lang);
+        if (pro_text != entry_pro->text.end() && !pro_text->second.empty()) {
+            box_locations.push_back(Screens::PRO_SELECT);
+            boxes.push_back(std::make_unique<Box>(pro_text->second, font_size, Screens::PRO_SELECT));
+        }
+    }
     for (auto [screen, sc] : {std::pair{Screens::PRACTICE_SELECT, SC::ENTRY_PRACTICE},
                               std::pair{Screens::ENTRY,           SC::ENTRY_COSTUME},
                               std::pair{Screens::SETTINGS,        SC::ENTRY_SETTINGS}}) {

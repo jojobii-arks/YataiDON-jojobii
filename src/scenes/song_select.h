@@ -78,8 +78,11 @@ protected:
     virtual void draw_overlays();
 
     virtual bool hides_dan() { return tex.skin_entry("entry_dan") != nullptr; }
-    virtual bool is_2p_screen() { return false; }
-    virtual Screens get_game_screen_target() { return Screens::GAME; }
+        virtual bool is_2p_screen() { return false; }
+        virtual Screens get_game_screen_target() { return Screens::GAME; }
+        // The screen a committed play should return to (returns-after-song) —
+        // stored into SessionData by select_song and read by RESULT / practice.
+        virtual Screens play_origin() { return Screens::SONG_SELECT; }
 
 public:
     SongSelectScreen() : Screen("song_select") {

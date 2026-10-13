@@ -50,9 +50,11 @@ double get_last_input_ms();
 void clear_input_buffers();
 
 // Dev/screenshot runs: queue a synthetic input press. Names: don, kat,
-// ldon, rdon, lkat, rkat (aliases: enter/left/right). Injected directly
-// into the press buffer, so no OS-level key events are emitted and the
-// user's own session / other game instances can never see them.
+// ldon, rdon, lkat, rkat (aliases: enter/left/right), escape/esc (the
+// escape key, for screens that poll the configured back key), tab, and
+// reload. Injected directly into the press buffer, so no OS-level key
+// events are emitted and the user's own session / other game instances
+// can never see them.
 void dev_inject_input(const std::string& name);
 void shutdown_sdl_joysticks();
 

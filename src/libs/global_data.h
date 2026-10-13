@@ -196,7 +196,11 @@ struct SessionData {
     std::string song_subtitle = "default_subtitle";
     bool song_subtitle_full_display = false;
     int genre_index = 0;
-    std::string genre_label;
+        std::string genre_label;
+
+        // returns-after-song (pro select v2): the screen the play was committed
+        // from, as int(Screens); -1 = unset -> keep today's hardcoded targets.
+        int origin_screen = -1;
     ResultData result_data;
     DanResultData dan_result_data;
     std::optional<std::map<double, int>> replay_input_log;

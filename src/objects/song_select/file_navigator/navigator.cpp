@@ -108,7 +108,7 @@ static uint32_t han_fold(uint32_t cp) {
     return (lo < HAN_FOLD_TABLE_SIZE && HAN_FOLD_TABLE[lo].from == cp) ? HAN_FOLD_TABLE[lo].to : cp;
 }
 
-static std::string search_fold(const std::string& s) {
+std::string search_fold(const std::string& s) {
     std::string out;
     out.reserve(s.size());
     size_t i = 0;

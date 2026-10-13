@@ -693,6 +693,8 @@ void dev_inject_input(const std::string& name) {
     else if (name == "rdon")                                        code = TOUCH_R_DON;
     else if (name == "kat"   || name == "lkat" || name == "left")  code = TOUCH_L_KAT;
     else if (name == "rkat"  || name == "right")                    code = TOUCH_R_KAT;
+    else if (name == "escape" || name == "esc")                     code = ray::KEY_ESCAPE;
+    else if (name == "tab")                                          code = ray::KEY_TAB;
     else {
         spdlog::warn("dev_inject_input: unknown input '{}'", name);
         return;

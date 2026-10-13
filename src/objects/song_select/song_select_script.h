@@ -38,7 +38,8 @@ private:
     sol::protected_function fn_draw_genre_bg;
     sol::protected_function fn_draw_selector;
     sol::protected_function fn_draw_option_panel;
-    sol::protected_function fn_draw_sort_window;
+        sol::protected_function fn_draw_sort_window;
+        sol::protected_function fn_draw_pro;
 
     sol::object box_to_lua(BaseBox* box);
 
@@ -62,5 +63,9 @@ public:
     bool draw_option_panel(SongSelectPlayer* player, int kind);
 
     bool has_sort_window() const { return fn_draw_sort_window.valid(); }
-    bool draw_sort_window(DiffSortSelect* window);
+        bool draw_sort_window(DiffSortSelect* window);
+
+        // Pro select v2: one full-screen draw call for the pro screen, driven by
+        // the list model. Defined by the skin as SongSelect:draw_pro.
+        bool draw_pro(class ProListModel* model);
 };

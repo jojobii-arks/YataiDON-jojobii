@@ -88,8 +88,8 @@ public:
     static constexpr Screens ALL_SCREENS[] = {
         Screens::TITLE, Screens::ENTRY, Screens::SONG_SELECT, Screens::GAME, Screens::GAME_2P,
         Screens::RESULT, Screens::RESULT_2P, Screens::SONG_SELECT_2P, Screens::DAN_SELECT,
-        Screens::GAME_DAN, Screens::DAN_RESULT, Screens::PRACTICE_SELECT, Screens::GAME_PRACTICE,
-        Screens::DRILL_SELECT, Screens::GAME_DRILL,
+        Screens::GAME_DAN, Screens::DAN_RESULT, Screens::PRACTICE_SELECT, Screens::PRO_SELECT,
+        Screens::GAME_PRACTICE, Screens::DRILL_SELECT, Screens::GAME_DRILL,
         Screens::SETTINGS, Screens::LOADING, Screens::INPUT_CALI, Screens::GAME_OVER, Screens::INPUT_TEST
     };
 

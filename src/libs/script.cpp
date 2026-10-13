@@ -15,6 +15,7 @@
 #include "webcam.h"
 #include "screen.h"
 #include "../objects/song_select/file_navigator/box_lua_bindings.h"
+#include "../objects/song_select/pro/pro_lua_bindings.h"
 #include "../objects/song_select/file_navigator/navigator.h"
 #include "../objects/enums.h"
 #include <spdlog/spdlog.h>
@@ -988,6 +989,7 @@ tex.set_function("begin_scissor", [](float x, float y, float w, float h) {
     lua["camera"] = camera_tbl;
 
     register_song_select_lua_bindings(lua);
+    register_pro_lua_bindings(lua);
 
     cache_usertype_method_lookups(lua.lua_state());
 }
