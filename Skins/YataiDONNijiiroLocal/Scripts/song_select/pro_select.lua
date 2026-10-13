@@ -7,7 +7,7 @@
 --
 -- Every number below comes off the Penpot page `Spec — pro select` (SPEC 1-5,
 -- FLOWS 1-9), not off taste:
---   card 1396x80 @ x460 (a 4px gap inside an 84px pitch, Joseph 2026-10-13: each
+--   card 1396x76 @ x460 (an 8px gap inside an 84px pitch, Joseph 2026-10-13: each
 --   entry reads as its own piece); the genre's own two tones — the
 --   saturated band as the frame, the band's light panel (panel_of) as the plate
 --   fills, which is the arcade board's own two-tone treatment (Joseph 2026-10-13);
@@ -45,13 +45,14 @@ local M = {}
 
 -- ---------------------------------------------------------------- constants
 local CARD_X, CARD_W, CARD_H = 460, 1396, 84
--- Joseph 2026-10-13: a slight gap between cards so each entry reads (and can be
--- pulled) as its own piece. The PITCH stays 84 — only the drawn card is 4px shorter
--- (80) with the plates shortened to match — so the ring round the card stays an even
--- 11px and the gap shows the backdrop between entries.
-local CARD_GAP = 4
-local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
-local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
+-- Joseph 2026-10-13: a gap between cards so each entry reads (and can be pulled) as
+-- its own piece — widened from 4 to 8 the same day ("make the card gap a little
+-- more"). The PITCH stays 84 — only the drawn card is 8px shorter (76) with the
+-- plates shortened to match — so the ring round the card stays an even 11px and the
+-- gap shows the backdrop between entries.
+local CARD_GAP = 8                           -- the inter-card gap (was 4; Joseph 2026-10-13)
+local CARD_IN  = CARD_H - CARD_GAP      -- 76: the drawn card height
+local PLATE_H  = 62 - CARD_GAP          -- 54: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
 local CURSOR_ROW = 4                         -- cursor row: pinned at y 532
 -- The window OVERDRAWS the screen now (Joseph 2026-10-13: "render more cards above
