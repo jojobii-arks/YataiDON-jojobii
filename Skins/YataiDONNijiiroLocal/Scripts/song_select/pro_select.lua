@@ -7,9 +7,11 @@
 --
 -- Every number below comes off the Penpot page `Spec — pro select` (SPEC 1-5,
 -- FLOWS 1-9), not off taste:
---   card 1396x84 @ x460, pitch 84, rows FLUSH; a 3px ink rim with the genre
---   band colour inside it; the cursor row's own rim turns gold at 5px (SPEC 3).
---   CHART card: three tan plates SCORE(11,118) | LEVEL(135,250) | NAME(391,994),
+--   card 1396x84 @ x460, pitch 84, rows FLUSH; the genre's own two tones — the
+--   saturated band as the frame, the band's light panel (panel_of) as the plate
+--   fills, which is the arcade board's own two-tone treatment (Joseph 2026-10-13);
+--   the cursor row's own rim turns gold at 5px (SPEC 3).
+--   CHART card: three light-panel plates SCORE(11,118) | LEVEL(135,250) | NAME(391,994),
 --     6px seams, 14px inner padding.
 --   FOLDER / BACK / FILTER card: ONE plate (11,11,1374,62), name or an icon +
 --     label (icon at 33, label at 83) — FLOW 1's folder card, FLOW 2's pair.
@@ -123,6 +125,14 @@ local COLLECTION_FRAME = { search = 12, recent = 9, favorite = 0, all = 0 }
 
 -- ------------------------------------------------------------------ helpers
 local function rgba(c, a) return { c[1], c[2], c[3], a or 255 } end
+
+-- The arcade boards are two-tone: a saturated band with a lighter panel inside it.
+-- Sampled off the wheel's own board render (frame 9 band #5DD1BB -> panel #B6EAE0),
+-- the panel is the band mixed 55% toward white — consistent to a fraction on every
+-- channel, and that is the tint the pro cards' plates wear.
+local function panel_of(c)
+    return { c[1] + (255 - c[1]) * 0.55, c[2] + (255 - c[2]) * 0.55, c[3] + (255 - c[3]) * 0.55 }
+end
 
 local function fmt_num(n)
     local s = tostring(math.floor(n))
@@ -242,17 +252,19 @@ local function draw_tier_pill(ids, tier, cx, cy, w, h, text_size, fade)
     if t then draw_text_at(t, cx - t.width / 2, cy, fade) end
 end
 
--- The card base: the genre's own dark rim colour, flat (Joseph 2026-10-13: the
--- card's border / background / text follow the genre, like the Nijiiro boards).
--- The plates inside carry the genre BAND colour, so a card reads as one of the
--- arcade's boards flattened — a dark genre outline with the bright band inside.
-local function card_base(rim, x, y, fade)
-    fill_rect(x, y, CARD_W, CARD_H, rim, 255 * fade)
+-- The card base: the genre's own saturated band colour, flat — the board's outer
+-- tone. The plates inside carry the band's LIGHT panel tone (panel_of), so a card
+-- reads exactly like the arcade board it comes from: saturated band frame with a
+-- light panel inside it (Joseph 2026-10-13: the card + details follow the genre,
+-- two-tone like the raw Nijiiro board assets).
+local function card_base(band, x, y, fade)
+    fill_rect(x, y, CARD_W, CARD_H, band, 255 * fade)
 end
 
 -- the three plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
 -- NAME(391,994), 6px seams, 11px inset — the SPEC 2 component contract. `fill`
--- is the genre's band colour; the seams and the border show the genre's rim.
+-- is the band's light panel tone, so the plate reads light while the border ring
+-- and the 6px seams between the plates stay the saturated band.
 local function chart_plates(x, y, fade, fill)
     fill_rect(x + 11, y + 11, 118, 62, fill, 255 * fade)
     fill_rect(x + 135, y + 11, 250, 62, fill, 255 * fade)
@@ -260,7 +272,8 @@ local function chart_plates(x, y, fade, fill)
 end
 
 -- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62); `fill`
--- is the genre band for a folder, the card's own band for BACK / FILTER.
+-- is the light panel of the card's band (folder = its genre, BACK / FILTER = their
+-- own colours), so the card's border ring stays the saturated band.
 local function one_plate(x, y, fade, fill)
     fill_rect(x + 11, y + 11, 1374, 62, fill, 255 * fade)
 end
@@ -404,8 +417,8 @@ end
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
 local function draw_chart_card(ids, info, x, y, fade)
     local frame = REF[info.genre_index] or 0
-    card_base(RIM[frame] or RIM[0], x, y, fade)
-    chart_plates(x, y, fade, BAND[frame] or BAND[0])
+    card_base(BAND[frame] or BAND[0], x, y, fade)
+    chart_plates(x, y, fade, panel_of(BAND[frame] or BAND[0]))
 
     local stroke = RIM[frame] or RIM[0]
     local cy = y + CARD_H / 2
@@ -458,8 +471,8 @@ local function draw_folder_card(ids, row, x, y, fade)
     local frame
     if row.kind == "folder" then frame = REF[row.genre_index] or 0
     else frame = COLLECTION_FRAME[row.kind] or 0 end
-    card_base(RIM[frame] or RIM[0], x, y, fade)
-    one_plate(x, y, fade, BAND[frame] or BAND[0])
+    card_base(BAND[frame] or BAND[0], x, y, fade)
+    one_plate(x, y, fade, panel_of(BAND[frame] or BAND[0]))
     local stroke = RIM[frame] or RIM[0]
     draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_H / 2, fade, 1300)
 end
@@ -468,8 +481,8 @@ end
 local function draw_pair_card(ids, kind, x, y, fade)
     local is_back = (kind == "back")
     local band = is_back and BACK_BAND or FILTER_BAND
-    card_base(INK, x, y, fade)
-    one_plate(x, y, fade, band)
+    card_base(band, x, y, fade)
+    one_plate(x, y, fade, panel_of(band))
     local cy = y + CARD_H / 2
     -- the design's icon slot (33,25) 34x34. The skin ships exactly two generic
     -- action badges — diff_select/back_en and diff_select/option_en, the same
@@ -677,11 +690,11 @@ local function draw_chips(st, x, fade)
     return 3
 end
 
--- chart details panel (380x336): genre rim shell -> genre band plate inset 11,
--- text at +26 — FLOW 2's chart details board, at its own y stations. Every line
--- is white-filled with the genre's own rim colour as the stroke and the panel
--- itself wears that genre's rim + band (2026-10-13: the details follow the genre
--- like the card; the dividers are the rim colour at half strength).
+-- chart details panel (380x336): the board's own band as the rim, its light panel
+-- inset 11, text at +26 — FLOW 2's chart details board, at its own y stations.
+-- Every line is white-filled with the genre's own rim colour as the stroke (the
+-- wheel's house style on a light board panel) and the panel wears the genre's two
+-- tones like the card (2026-10-13); the dividers are the band at two-thirds.
 local function draw_details(ids, model, st, x, y, fade)
     local h = 336
     local row = model:row(0)
@@ -695,16 +708,15 @@ local function draw_details(ids, model, st, x, y, fade)
     local band = BAND[frame] or BAND[0]
     local stroke = RIM[frame] or RIM[0]
 
-    fill_rect(x, y, 380, h, stroke, 255 * fade)              -- the genre's dark rim
-    fill_rect(x + 3, y + 3, 374, h - 6, band, 255 * fade)
-    fill_rect(x + 11, y + 11, 358, h - 22, band, 255 * fade)  -- the genre's band
+    fill_rect(x, y, 380, h, band, 255 * fade)                    -- the panel's band rim
+    fill_rect(x + 11, y + 11, 358, h - 22, panel_of(band), 255 * fade)  -- its light panel
 
     local tx = x + 26
     if is_chart then
         draw_text_at(W("CHART DETAILS", 16, stroke, 2), tx, y + 30, fade)
         draw_text_at(W(info.title, 24, stroke, 3), tx, y + 66, fade, 332)
         draw_text_at(W(info.subtitle, 16, stroke, 2), tx, y + 94, fade, 332)
-        fill_rect(tx, y + 122, 332, 2, rgba(stroke, 150), 255 * fade)
+        fill_rect(tx, y + 122, 332, 2, rgba(band, 170), 255 * fade)
 
         -- course / star / level / branch / tier (@ +134)
         local ay = y + 134
@@ -722,7 +734,7 @@ local function draw_details(ids, model, st, x, y, fade)
             placeholder(tx + 160, ay + 2, 52, 36, fade)
         end
 
-        fill_rect(tx, y + 196, 332, 2, rgba(stroke, 150), 255 * fade)
+        fill_rect(tx, y + 196, 332, 2, rgba(band, 170), 255 * fade)
         draw_text_at(W("SCORE", 14, stroke, 2), tx, y + 206, fade)
         if info.played then
             draw_text_at(W(fmt_num(info.score), 30, stroke, 3), tx, y + 237, fade, 230)
