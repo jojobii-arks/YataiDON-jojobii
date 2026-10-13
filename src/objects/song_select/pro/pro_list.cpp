@@ -24,14 +24,13 @@ std::string lower_ascii(std::string s) {
     return s;
 }
 
-// The SORT entry's value order — the dialog's 5 cells, in the Lua's own order.
+// The SORT entry's value order — the dialog's 4 cells, in the Lua's own order.
 int sort_index(ProListModel::Sort s) {
     switch (s) {
         case ProListModel::Sort::SCORE: return 0;
         case ProListModel::Sort::CROWN: return 1;
         case ProListModel::Sort::ALPHA: return 2;
-        case ProListModel::Sort::TIER:  return 3;
-        case ProListModel::Sort::LEVEL: return 4;
+        case ProListModel::Sort::LEVEL: return 3;
     }
     return 2;
 }
@@ -41,8 +40,7 @@ ProListModel::Sort sort_at_index(int i) {
         case 0: return ProListModel::Sort::SCORE;
         case 1: return ProListModel::Sort::CROWN;
         case 2: return ProListModel::Sort::ALPHA;
-        case 3: return ProListModel::Sort::TIER;
-        case 4: return ProListModel::Sort::LEVEL;
+        case 3: return ProListModel::Sort::LEVEL;
     }
     return ProListModel::Sort::ALPHA;
 }
@@ -250,7 +248,7 @@ void ProListModel::update() {
 
 void ProListModel::build_songs_step(size_t budget) {
     const auto& levels_map = nav_->library_song_levels();
-    const bool need_tier = !filter_.tier.empty() || sort_ == Sort::TIER || sort_ == Sort::LEVEL;
+    const bool need_tier = !filter_.tier.empty() || sort_ == Sort::LEVEL;
     size_t done = 0;
     while (build_pos_ < build_songs_.size() && done < budget) {
         const auto& [key, path] = build_songs_[build_pos_];
@@ -320,7 +318,6 @@ void ProListModel::build_sort_and_assemble() {
             switch (mode) {
                 case Sort::SCORE: if (a.score != b.score) return a.score > b.score; break;
                 case Sort::CROWN: if (a.crown != b.crown) return a.crown > b.crown; break;
-                case Sort::TIER:  if (a.tier_rank != b.tier_rank) return a.tier_rank > b.tier_rank; break;
                 case Sort::ALPHA: break;
                 case Sort::LEVEL: break;   // handled above
             }
@@ -496,7 +493,6 @@ const char* ProListModel::sort_name() const {
         case Sort::SCORE: return "SCORE";
         case Sort::CROWN: return "CROWN";
         case Sort::ALPHA: return "A-Z";
-        case Sort::TIER:  return "TIER";
         case Sort::LEVEL: return "LEVEL";
     }
     return "A-Z";
@@ -674,18 +670,32 @@ void ProListModel::move_filter_cursor(int delta) {
     filter_value_cursor_ = ((filter_value_cursor_ + delta) % n + n) % n;
 }
 
-// Every value of the TIER entry, in the dialog's draw order: ALL, the level's
-// own ladder (or, at ★ALL, the whole ladder), then NONE last.
+// Every value of the TIER entry, in the dialog's draw order: ALL first, then
+// the star's own ladder, then NONE last. With STAR=ALL there is NO ladder to
+// offer — a tier is a property of a (song, course, ★) triple, so with no star
+// chosen only ALL and NONE mean anything (rework 2026-10).
 std::vector<std::string> ProListModel::filter_tier_values() const {
     std::vector<std::string> vals;
     vals.emplace_back("");                     // ALL
-    if (filter_.star == 0) {
-        for (const auto& t : ladder_hard_to_blank()) vals.push_back(t);
-    } else {
+    if (filter_.star != 0) {
         for (const auto& t : tier_set_for_level(filter_.star)) vals.push_back(t);
     }
     vals.emplace_back("NONE");
     return vals;
+}
+
+void ProListModel::reconcile_tier() {
+    if (filter_.tier.empty()) return;
+    for (const std::string& v : filter_tier_values()) {
+        if (v == filter_.tier) return;         // still offered — nothing to do
+    }
+    // The tier in force is not in the offered set (a graded tier saved with
+    // STAR=ALL, or a letter outside the chosen level's own set). Fall back to
+    // ALL rather than leave an impossible state on screen; rebuild if live.
+    spdlog::info("[pro] tier '{}' not offered at star {} -- falling back to ALL",
+                 filter_.tier, filter_.star);
+    filter_.tier.clear();
+    if (context_ != Context::ROOT) begin_build();
 }
 
 int ProListModel::filter_value_count() const {
@@ -693,7 +703,7 @@ int ProListModel::filter_value_count() const {
         case kEntryDiff: return 6;                          // Easy..Ura + the checkmark
         case kEntryStar: return 11;                         // ALL + 1..10
         case kEntryTier: return (int)filter_tier_values().size();
-        case kEntrySort: return 5;                          // SCORE CROWN A-Z TIER LEVEL
+        case kEntrySort: return 4;                          // SCORE CROWN A-Z LEVEL
         default: return 0;                                  // CONFIRM is an action, not a group
     }
 }
@@ -789,18 +799,44 @@ void ProListModel::set_active_course(int course) {
 void ProListModel::open_picker() {
     if (!selected_ || rows_.empty() || cursor_row().kind != RowKind::CHART) return;
     picker_open_ = true;
-    picker_cursor_ = active_course();
-    if (picker_cursor_ < 0) picker_cursor_ = 0;
+    // Open on the active course when the song has it; otherwise land on the
+    // first present course, so the cursor starts somewhere selectable.
+    const std::array<PickerCell, 5> cells = picker_cells();
+    int c = active_course();
+    if (c < 0 || c > 4 || !cells[c].has_course) {
+        c = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (cells[i].has_course) { c = i; break; }
+        }
+    }
+    picker_cursor_ = c;
 }
 
 void ProListModel::move_picker(int delta) {
-    picker_cursor_ = ((picker_cursor_ + delta) % 5 + 5) % 5;
+    if (!picker_open_ || delta == 0) return;
+    // Absent courses are UNSELECTABLE: the cursor SKIPS them, so don can never
+    // land on (or commit) a slot the song does not have. Walk slot by slot,
+    // wrapping — with |delta| = 1 one pass covers all five slots. If nothing is
+    // present (cannot happen for a CHART row) the cursor simply stays put.
+    const std::array<PickerCell, 5> cells = picker_cells();
+    int c = picker_cursor_;
+    for (int step = 0; step < 5; ++step) {
+        c = ((c + delta) % 5 + 5) % 5;
+        if (cells[c].has_course) { picker_cursor_ = c; return; }
+    }
 }
 
 void ProListModel::commit_picker() {
     if (!picker_open_) return;
+    const std::array<PickerCell, 5> cells = picker_cells();
+    picker_open_ = false;   // don always leaves the picker
+    if (picker_cursor_ < 0 || picker_cursor_ > 4 || !cells[picker_cursor_].has_course) {
+        // Guard the commit too (belt and braces — the cursor skips absent slots):
+        // an absent course is never selected, so the swap is left as it was.
+        spdlog::info("[pro] change diff refused: course {} is absent on this song", picker_cursor_);
+        return;
+    }
     set_active_course(picker_cursor_);
-    picker_open_ = false;
     spdlog::info("[pro] change diff commit: swap scoped to row {} -> course {}",
                  swap_row_, swap_course_.value_or(-1));
 }

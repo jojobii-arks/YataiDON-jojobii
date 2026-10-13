@@ -187,10 +187,13 @@ private:
         f.star = pc.star;
         f.tier = pc.tier;
         model->filter() = f;
+        // A tier saved while STAR=ALL (or outside the level's own set) is not
+        // offered any more: clamp it to ALL before the list builds.
+        model->reconcile_tier();
         if (pc.sort == "SCORE")      model->set_sort(ProListModel::Sort::SCORE);
         else if (pc.sort == "CROWN") model->set_sort(ProListModel::Sort::CROWN);
-        else if (pc.sort == "TIER")  model->set_sort(ProListModel::Sort::TIER);
         else if (pc.sort == "LEVEL") model->set_sort(ProListModel::Sort::LEVEL);
+        else if (pc.sort == "TIER")  model->set_sort(ProListModel::Sort::LEVEL);  // removed sort -> LEVEL
         else                         model->set_sort(ProListModel::Sort::ALPHA);
     }
 
@@ -207,7 +210,6 @@ private:
         switch (model->sort()) {
             case ProListModel::Sort::SCORE: pc.sort = "SCORE"; break;
             case ProListModel::Sort::CROWN: pc.sort = "CROWN"; break;
-            case ProListModel::Sort::TIER:  pc.sort = "TIER";  break;
             case ProListModel::Sort::LEVEL: pc.sort = "LEVEL"; break;
             case ProListModel::Sort::ALPHA: pc.sort = "ALPHA"; break;
         }

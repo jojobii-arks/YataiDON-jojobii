@@ -495,8 +495,12 @@ local function draw_picker(ids, model, st, x, y, fade)
     for i = 1, 5 do
         local sx = x + 17 + (i - 1) * 276
         local cell = cells[i] or {}
-        local is_cur = ((st.picker or 0) + 1) == i
-        fill_rect(sx, seg_top, 262, 60, TAN_D, 255 * fade)
+        local present = cell.has_course and true or false
+        local is_cur = present and ((st.picker or 0) + 1) == i
+        -- A present segment wears the tan plate; an ABSENT one is washed out to
+        -- ink so it reads as disabled — the cursor never lands on it (skipped in
+        -- move_picker), and the commit refuses it.
+        fill_rect(sx, seg_top, 262, 60, present and TAN_D or INK, 255 * fade)
         -- The current segment keeps its own fill and is marked with the design's
         -- 3px gold ring — the same idiom the Filter/Sort dialog uses for its
         -- current cell — so the tier's colour still reads. (Filling the whole
@@ -508,7 +512,7 @@ local function draw_picker(ids, model, st, x, y, fade)
             fill_rgb(sx, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
             fill_rgb(sx + 259, seg_top, 3, 60, GOLD[1], GOLD[2], GOLD[3], a)
         end
-        if cell.has_course then
+        if present then
             draw_art(ids, "course", sx + 34, cy, 40, 40, { frame = i - 1, fade = fade })
             local lv = math.max(1, math.min(11, cell.level or 1))
             draw_art(ids, "level_number", sx + 80, cy, 36, 36,
@@ -522,11 +526,13 @@ local function draw_picker(ids, model, st, x, y, fade)
                 placeholder(sx + 192, cy - 15, 56, 30, fade)
             end
         else
-            -- a difficulty this song does not have: the empty state, at the
-            -- same two stations the live segment uses
-            placeholder(sx + 14, cy - 20, 40, 40, fade)
+            -- a difficulty this song does not have: kept visible so the song's
+            -- shape still reads, but unmistakably NOT selectable — the plate is
+            -- inked out above, the placeholder and label are dimmed, and no gold
+            -- ring can ever mark it (the cursor skips it).
+            placeholder(sx + 14, cy - 20, 40, 40, fade * 0.45)
             draw_text_at(T(COURSE_NAME[i], 22, { 150, 130, 112 }, INK, 2),
-                         sx + 104, cy, fade * 0.8)
+                         sx + 104, cy, fade * 0.4)
         end
     end
 end
@@ -822,13 +828,13 @@ local function draw_filter_dialog(model, st, fade)
         end
     end
 
-    -- TIER — that level's own set (never generated: the sets are not monotonic)
+    -- TIER — at a chosen star, that level's own set (never generated: the sets
+    -- are not monotonic). With STAR=ALL there is no set to offer — a tier needs
+    -- a star level — so only ALL and NONE show.
     dlg_entry_label("TIER", DLG_Y + 318, entry_focus and cur == 2, fade)
     local tier_cells = { "ALL" }
     if star > 0 then
         for _, tv in ipairs(model:tier_set(star)) do tier_cells[#tier_cells + 1] = tv end
-    else
-        for _, tv in ipairs(model:ladder()) do tier_cells[#tier_cells + 1] = tv end
     end
     tier_cells[#tier_cells + 1] = "None"
     local cx = DLG_X + 290                     -- flowing: ALL, the level's letters, None last
@@ -864,7 +870,7 @@ local function draw_filter_dialog(model, st, fade)
     -- LEVEL is the tier ladder ACROSS levels: ★10 hardest-tier-first down to ★1.
     dlg_entry_label("SORT", DLG_Y + 432, entry_focus and cur == 3, fade)
     local sort_disp = (st.sort == "A-Z") and "A–Z" or (st.sort or "A–Z")
-    local sort_cells = { "SCORE", "CROWN", "A–Z", "TIER", "LEVEL" }
+    local sort_cells = { "SCORE", "CROWN", "A–Z", "LEVEL" }
     for i, sv in ipairs(sort_cells) do
         local x = DLG_X + 290 + (i - 1) * 172
         dlg_cell(x, DLG_Y + 396, 166, 64, sv, (sv == sort_disp) and GOLD or TAN_D,

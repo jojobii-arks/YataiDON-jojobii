@@ -39,7 +39,9 @@ public:
         FILTER,    // the periodic FILTER row (opens the Filter/Sort dialog)
     };
 
-    enum class Sort { SCORE, CROWN, ALPHA, TIER, LEVEL };
+    // The sort values, in the dialog's cell order: SCORE, CROWN, A-Z, LEVEL.
+    // (TIER was removed — LEVEL is the tier ladder WITHIN/across levels.)
+    enum class Sort { SCORE, CROWN, ALPHA, LEVEL };
 
     // The Filter/Sort dialog has TWO focus levels (control rework, 2026-10):
     //   ENTRY — kat walks the entries (Difficulty, Star, Tier, Sort, Confirm);
@@ -180,8 +182,9 @@ public:
     // filter_value_cursor() is the value index within it —
     //   Difficulty 0..4 = the Easy..Ura toggles, 5 = the confirm checkmark
     //   Star       0 = ALL, 1..10 = the level
-    //   Tier       0 = ALL, then the level's ladder, last index = NONE
-    //   Sort       0..4 = SCORE, CROWN, A-Z, TIER, LEVEL
+    //   Tier       0 = ALL, then (at a chosen star) the level's own set, NONE last;
+    //              with STAR=ALL there is no set to offer — only ALL and NONE
+    //   Sort       0..3 = SCORE, CROWN, A-Z, LEVEL
     int filter_cursor() const { return filter_cursor_; }
     int filter_value_cursor() const { return filter_value_cursor_; }
     FilterFocus filter_focus() const { return filter_focus_; }
@@ -195,6 +198,12 @@ public:
     // star change clears the tier selection (SPEC 3: SSS at ★10 does not exist
     // at ★9). Returns true when the dialog should close.
     bool advance_filter_value();
+
+    // Clamp the tier in force to the set the current star actually offers — a
+    // saved tier the star no longer offers (a graded tier with STAR=ALL, or a
+    // letter outside the chosen level's set) falls back to ALL rather than
+    // leaving the dialog in an impossible state. Called at config load.
+    void reconcile_tier();
 
     // ---- SEARCH --------------------------------------------------------
     void open_search(const std::string& query);
@@ -249,7 +258,7 @@ private:
     void enter_filter_group();                                    // ENTRY -> GROUP
     void exit_filter_group();                                     // GROUP -> ENTRY
     int filter_value_count() const;                               // values in the entered entry
-    std::vector<std::string> filter_tier_values() const;          // ALL, the ladder, NONE
+    std::vector<std::string> filter_tier_values() const;          // ALL, (set at a star), NONE
 
     // ---- build state (chunked) -----------------------------------------
     void begin_build();
