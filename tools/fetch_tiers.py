@@ -6,8 +6,11 @@ Usage:
 
 Default output: data/tier_data.json (relative to the repo root).
 
-The game loads this file at startup and never calls the network at runtime.
-Re-run this script when you want to refresh the committed tier list.
+The tier list is community-curated data (taiko.wiki / ESE) and is NOT shipped in
+this repository — run this script once after cloning, and re-run it whenever you
+want a refresh. The game loads the generated file at startup and never calls the
+network at runtime; if the file is missing, tier badges and Tier Sort are simply
+disabled.
 """
 
 from __future__ import annotations

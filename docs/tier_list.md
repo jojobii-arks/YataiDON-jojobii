@@ -4,8 +4,10 @@ Fork feature: star-level Tier Sort + gold tier badges on song boards.
 
 ## Data
 
-- Artifact: `data/tier_data.json` (static; no network at runtime)
-- Refresh: `python tools/fetch_tiers.py` (writes the JSON from taiko.wiki)
+- Artifact: `data/tier_data.json` — **not shipped in this repository.** Fetch it
+  with `python tools/fetch_tiers.py` once after cloning; a missing file simply
+  disables tiers (the loader warns and returns, it does not crash).
+- Refresh: re-run the same script to rewrite the JSON from taiko.wiki.
 - A tier is per **(song, course, star level)** — ★6..★10 each have their own letter scale
 
 ## Lookup order (source of truth)

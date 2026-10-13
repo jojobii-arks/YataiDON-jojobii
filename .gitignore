@@ -15,6 +15,7 @@ YataiDON.exe
 /.cmake-deps
 /Skins/*
 /.claude
+.cursor/
 .version
 /android/local.properties
 /android/keystore.properties
@@ -25,6 +26,7 @@ YataiDON.exe
 /.android-ffmpeg
 /.android-openssl
 YataiDON.data
+data/tier_data.json
 YataiDON.html
 YataiDON.js
 YataiDON.wasm

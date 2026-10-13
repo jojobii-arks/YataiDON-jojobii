@@ -52,8 +52,10 @@ Gold tier badges on song boards plus a level-aware Tier Sort.
 - Matching tries the TJA `TITLE` / `TITLEEN` (and other `TITLE*` languages)
   first, falling back to the song's folder name. Titles win because on-disk
   folder names often diverge from wiki titles.
-- Data is a static artifact, `data/tier_data.json` — no network access at
-  runtime. Refresh it with `python tools/fetch_tiers.py`.
+- The data is community-curated (taiko.wiki / ESE) and is **not shipped in this
+  repository**. Fetch it once after cloning: `python tools/fetch_tiers.py` writes
+  `data/tier_data.json`. Without that file, tier badges and Tier Sort are simply
+  disabled. The game never touches the network at runtime.
 
 Details: [`tier_list.md`](tier_list.md) and the skin hook in
 [`tier_list_lua_hook.md`](tier_list_lua_hook.md).
