@@ -689,7 +689,7 @@ void Chara3D::draw_outline(float x, float y, int rt_w, int rt_h, float full_h) {
         if (outline_size_loc < 0)  outline_size_loc  = ray::GetShaderLocation(outline_shader, "screenSize");
         ray::SetShaderValue(outline_shader, outline_param_loc, param, ray::SHADER_UNIFORM_VEC2);
         ray::SetShaderValue(outline_shader, outline_size_loc, size, ray::SHADER_UNIFORM_VEC2);
-        const float draw_size = scale * draw_scale * tex.screen_scale;
+        const float draw_size = scale * draw_scale * size_mul * tex.screen_scale;
 
         rlSetCullFace(RL_CULL_FACE_FRONT);
         for (auto& part : parts)
@@ -713,7 +713,7 @@ void Chara3D::draw_3d(float x, float y) {
         parts[p].transform = rot;
     }
     for (size_t p = 0; p < parts.size(); p++)
-        draw_model_face_last(parts[p], part_face_material_index[p], part_blend_indices[p], part_twosided_indices[p], {x, y, 400.0f}, scale * draw_scale * tex.screen_scale);
+        draw_model_face_last(parts[p], part_face_material_index[p], part_blend_indices[p], part_twosided_indices[p], {x, y, 400.0f}, scale * draw_scale * size_mul * tex.screen_scale);
     for (size_t p = 0; p < parts.size(); p++)
         parts[p].transform = saved[p];
 }
@@ -729,7 +729,7 @@ bool Chara3D::screen_bounds(float x, float y, const ray::Camera3D& cam3d, float 
                             float& x0, float& y0, float& x1, float& y1) {
     float y_angle = mirror ? -rot_y : rot_y;
     ray::Matrix rot = rotation_xyz(rot_x * DEG2RAD, y_angle * DEG2RAD, rot_z * DEG2RAD);
-    const float s = scale * draw_scale * tex.screen_scale;
+    const float s = scale * draw_scale * size_mul * tex.screen_scale;
     ray::Matrix transform = ray::MatrixMultiply(rot, ray::MatrixMultiply(ray::MatrixScale(s, s, s),
                                                                          ray::MatrixTranslate(x, y, 400.0f)));
     x0 = y0 = std::numeric_limits<float>::max();
@@ -756,6 +756,12 @@ bool Chara3D::screen_bounds(float x, float y, const ray::Camera3D& cam3d, float 
 void Chara3D::draw(float x, float y, float scale_mul) {
     if (tex.options[SCO::DISABLE_CHARA_3D]) return;
 
+    // The third parameter was accepted and never read. `scale` itself is the
+    // per-character config scale (set once in the ctor), so the multiplier is
+    // kept separate and folded into each draw path's size. Callers that pass
+    // nothing still get 1.0, i.e. unchanged behaviour.
+    size_mul = scale_mul;
+
     int rw = ray::GetRenderWidth();
     int rh = ray::GetRenderHeight();
     ray::Camera2D cam2d = compute_camera2d(tex.screen_width, tex.screen_height);
@@ -769,8 +775,10 @@ void Chara3D::draw(float x, float y, float scale_mul) {
     ray::Camera3D cam3d = camera2d_to_3d(cam2d);
     const float zoom = std::max(cam2d.zoom, 0.0001f);
     if (full_target || x != last_draw_x || y != last_draw_y || zoom != last_zoom ||
+        scale != last_scale || size_mul != last_size_mul ||
         cam3d.position.x != last_cam_x || cam3d.position.y != last_cam_y || rw != last_rw || rh != last_rh) {
         last_draw_x = x; last_draw_y = y; last_zoom = zoom;
+        last_scale = scale; last_size_mul = size_mul;
         last_cam_x = cam3d.position.x; last_cam_y = cam3d.position.y; last_rw = rw; last_rh = rh;
         render_dirty = true;
     }

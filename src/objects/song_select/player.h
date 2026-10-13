@@ -51,6 +51,11 @@ public:
 
     SongSelectPlayer(PlayerNum player_num);
 
+    // Don-chan's size multiplier. The chara's own art is ~270 px tall at 1.0 and
+    // reaches up to y 684, which collides with a tall left-hand panel on the pro
+    // screen; a screen can ask for a smaller character without touching the wheel.
+    float chara_scale = 1.0f;
+
     void update(double current_time);
     bool is_voice_playing();
 

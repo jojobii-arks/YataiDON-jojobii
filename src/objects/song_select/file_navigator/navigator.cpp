@@ -334,9 +334,27 @@ void Navigator::preload(std::vector<fs::path> songs_paths, std::optional<std::ve
                             std::lock_guard<std::mutex> lock(map_mutex);
                             song_files[{meta->title, meta->subtitle}] = file;
                             std::string text;
-                            for (const auto& [lang, t] : meta->titles)    text += t + '\n';
+                            std::vector<std::string> tier_keys;
+                            auto push_tier_key = [&](const std::string& s) {
+                                if (s.empty()) return;
+                                for (const auto& k : tier_keys)
+                                    if (TierListManager::normalize_key(k) == TierListManager::normalize_key(s)) return;
+                                tier_keys.push_back(s);
+                            };
+                            // TITLE first (en / ja / others), folder last — the same order the
+                            // parse path below and SongBox use. This cached path used to skip the
+                            // tier keys entirely, which left song_tier_keys empty for every chart
+                            // the loading screen had already parsed (i.e. every chart), so any
+                            // tier lookup through the library seam found nothing.
+                            for (const auto& [lang, t] : meta->titles)
+                                if (lang == "en") push_tier_key(t);
+                            for (const auto& [lang, t] : meta->titles)
+                                if (lang == "ja") push_tier_key(t);
+                            for (const auto& [lang, t] : meta->titles)    { text += t + '\n'; push_tier_key(t); }
                             for (const auto& [lang, t] : meta->subtitles) text += t + '\n';
+                            push_tier_key(tier_list.folder_key_from_path(file));
                             song_search_text[file.string()] = search_fold(text);
+                            song_tier_keys[file.string()] = std::move(tier_keys);
                             song_levels[file.string()] = meta->levels;
                         }
                         continue;

@@ -19,6 +19,11 @@
 --     y 280/318/356, chart details (48,366) 380x336.
 --   Filter/Sort dialog: shell (360,190) 1200x700 (FLOW 5).
 --
+-- Don-chan and the player card are NOT drawn here — they are engine objects
+-- (SongSelectPlayer's `chara` and `nameplate`), drawn by the screen through
+-- SongSelectPlayer::draw at the skin_config stations song_select_chara_1p /
+-- song_select_nameplate_1p, exactly as the wheel draws them.
+--
 -- The card base is drawn FLAT from the band-colour table. It is deliberately
 -- NOT sliced out of `box/bar_genre`: that texture's outer 40px corner columns
 -- are transparent and its interior is a pale tint of the band, so slicing it
@@ -77,6 +82,18 @@ local INK    = {26, 17, 8}                  -- #1A1108
 local TAN    = {247, 194, 160}              -- #F7C2A0
 local TAN_D  = {233, 169, 125}              -- #E9A97D — the dialog's cell fills
 local GOLD   = {255, 210, 74}               -- #FFD24A
+local WHITE  = {255, 255, 255}
+local DIV    = {219, 174, 136}              -- #DBAE88, the details panel's dividers
+
+-- Native texture sizes. draw_texture's x2/y2 are ADDITIVE deltas on the natural
+-- size (see draw_board in song_select.lua), so art drawn at a design station has
+-- to say how much to shrink by. Without this every piece drew at its native
+-- size — the course icon is 96x96 and the tier pill 184x40 — whatever box it was
+-- placed in.
+local NAT = {
+    star = {40, 40}, level_number = {48, 48}, branch = {40, 40},
+    rank = {40, 40}, crown = {40, 40}, course = {96, 96}, pill = {184, 40},
+}
 
 local COURSE_NAME = { "EASY", "NORMAL", "HARD", "ONI", "URA" }
 local CONTROL_NAME = { "BACK", "SETTINGS", "PLAY", "PRACTICE", "CHANGE DIFF" }
@@ -129,18 +146,31 @@ local function draw_text_at(t, x, cy, fade, max_w)
              x2 = x2, fade = fade })
 end
 
--- centred text inside a box (x, y, w, h)
+-- white-filled text with the appropriate stroke — the skin's own house style for
+-- anything sitting on a tan plate (see the wheel's board titles)
+local function W(s, size, stroke, thick)
+    return T(s, size, WHITE, stroke or INK, thick)
+end
+
+-- centred white text inside a box
 local function draw_text_box(s, size, fill, outline, thick, x, y, w, h, fade)
     local t = T(s, size, fill, outline, thick)
     if not t then return end
     draw_text_at(t, x + (w - t.width) / 2, y + h / 2, fade, w - 4)
 end
 
-local function draw_centered(id, cx, cy, w, h, extra)
+-- one art piece at its design station, scaled from its native size
+local function draw_art(ids, key, cx, cy, w, h, extra)
+    local id = ids[key]
     if not id then return end
+    local n = NAT[key]
     extra = extra or {}
-    extra.x = cx - w / 2
-    extra.y = cy - h / 2
+    extra.x = math.floor(cx - w / 2 + 0.5)
+    extra.y = math.floor(cy - h / 2 + 0.5)
+    if n then
+        extra.x2 = w - n[1]
+        extra.y2 = h - n[2]
+    end
     tex.draw_texture(id, extra)
 end
 
@@ -149,9 +179,21 @@ local function fill_rect(x, y, w, h, c, a)
                   math.floor(h + 0.5), c[1], c[2], c[3], a)
 end
 
+-- The tier pill: a flat plate in the tier colour with a 2px ink rim, drawn the
+-- same way as the card base. Deliberately NOT `modifier/mod_box` — that art is
+-- packed into a sheet and drawn at its native 184x40 by the options panel, and
+-- asking the engine to scale it down to the design's 58x40 renders nothing at
+-- all. A flat plate is what the design's pill is anyway.
+local function draw_tier_pill(ids, tier, cx, cy, w, h, text_size, fade)
+    local c = TIER_C[tier]
+    if not c then return end
+    fill_rect(cx - w / 2, cy - h / 2, w, h, INK, 255 * fade)
+    fill_rect(cx - w / 2 + 2, cy - h / 2 + 2, w - 4, h - 4, c, 255 * fade)
+    local t = W(tier, text_size or 20, INK, 2)
+    if t then draw_text_at(t, cx - t.width / 2, cy, fade) end
+end
+
 -- The card base: the design's 3px ink rim with the genre band colour inside it.
--- Flat on purpose — see the header note about box/bar_genre's transparent
--- corner columns and pale interior tint.
 local function card_base(band, x, y, fade)
     fill_rect(x, y, CARD_W, CARD_H, INK, 255 * fade)
     fill_rect(x + RIM_T, y + RIM_T, CARD_W - 2 * RIM_T, CARD_H - 2 * RIM_T, band, 255 * fade)
@@ -180,14 +222,7 @@ local function placeholder(x, y, w, h, fade)
 end
 
 -- ------------------------------------------------------------------- ids
-function M._ids()
-    if M._ids_t then return M._ids_t end
-    tex.load_folder("song_select", "box")
-    tex.load_folder("song_select", "yellow_box")
-    tex.load_folder("song_select", "diff_select")
-    tex.load_folder("song_select", "diff_sort")
-    tex.load_folder("song_select", "modifier")
-    local t = {}
+local function resolve_ids(t)
     t.background   = tex.get_texture("song_select/box/background")
     t.star         = get_any("yellow_box", "star")
     t.level_number = get_any("yellow_box", "level_number")
@@ -195,8 +230,27 @@ function M._ids()
     t.crown        = get_any("diff_select", "difficulty_crown")
     t.course       = get_any("diff_sort", "diff")
     t.branch       = get_any("yellow_box", "branch_indicator")
-    t.pill         = get_any("modifier", "mod_box")
-    M._ids_t = t
+end
+
+function M._ids()
+    if not M._ids_t then
+        M._ids_t = {}
+        M._retry = 0
+    end
+    local t = M._ids_t
+    local complete = t.background and t.star and t.level_number and t.rank
+                 and t.crown and t.course and t.branch
+    -- A folder that is not resident yet resolves to nil on the first frames, and
+    -- caching that nil would blank the art for the whole session. Retry the
+    -- misses for a bounded number of frames instead.
+    if not complete and M._retry < 300 then
+        M._retry = M._retry + 1
+        tex.load_folder("song_select", "box")
+        tex.load_folder("song_select", "yellow_box")
+        tex.load_folder("song_select", "diff_select")
+        tex.load_folder("song_select", "diff_sort")
+        resolve_ids(t)
+    end
     return t
 end
 
@@ -218,19 +272,19 @@ local function draw_chart_card(ids, info, x, y, fade)
     card_base(BAND[frame] or BAND[0], x, y, fade)
     chart_plates(x, y, fade)
 
-    local rim = RIM[frame] or RIM[0]
+    local stroke = RIM[frame] or RIM[0]
     local cy = y + CARD_H / 2
 
     -- SCORE section — rank art then crown, 14px inside an 11px plate
     local sx = x + 25
     if info.played and info.rank and info.rank > 0 then
-        draw_centered(ids.rank, sx + 20, cy, 40, 40, { frame = info.rank - 1, fade = fade })
+        draw_art(ids, "rank", sx + 20, cy, 40, 40, { frame = info.rank - 1, fade = fade })
     else
         placeholder(sx, cy - 20, 40, 40, fade)
     end
     local cx2 = sx + 50
     if info.played and info.crown and info.crown > 0 then
-        draw_centered(ids.crown, cx2 + 20, cy, 40, 40, { frame = info.crown, fade = fade })
+        draw_art(ids, "crown", cx2 + 20, cy, 40, 40, { frame = info.crown, fade = fade })
     else
         placeholder(cx2, cy - 20, 40, 40, fade)
     end
@@ -238,22 +292,16 @@ local function draw_chart_card(ids, info, x, y, fade)
     -- LEVEL section: course icon 56 @ x+149, branch mark, star @ +230,
     -- level number 48 @ +279, tier pill 58x40 @ +342 (SPEC 2 stations)
     local icon_x, icon_y = x + 149, y + 14
-    if info.course and ids.course then
-        draw_centered(ids.course, icon_x + 28, cy, 56, 56, { frame = info.course, fade = fade })
+    draw_art(ids, "course", icon_x + 28, cy, 56, 56, { frame = info.course or 0, fade = fade })
+    if info.branching then
+        draw_art(ids, "branch", icon_x + 44, icon_y + 44, 24, 24, { fade = fade })
     end
-    if info.branching and ids.branch then
-        draw_centered(ids.branch, icon_x + 56 - 12, icon_y + 56 - 12, 24, 24, { fade = fade })
-    end
-    draw_centered(ids.star, x + 230, cy, 40, 40, { frame = info.course or 0, fade = fade })
+    draw_art(ids, "star", x + 230, cy, 40, 40, { frame = info.course or 0, fade = fade })
     local lv = math.max(1, math.min(11, info.level or 1))
-    draw_centered(ids.level_number, x + 279, cy, 48, 48,
-                  { frame = (info.course or 0) * 11 + (lv - 1), fade = fade })
+    draw_art(ids, "level_number", x + 279, cy, 48, 48,
+             { frame = (info.course or 0) * 11 + (lv - 1), fade = fade })
     if info.tier and info.tier ~= "" then
-        local c = TIER_C[info.tier]
-        if c and ids.pill then
-            draw_centered(ids.pill, x + 342, cy, 58, 40, { color = rgba(c), fade = fade })
-            draw_text_box(info.tier, 20, { 255, 255, 255 }, INK, 2, x + 313, y + 22, 58, 40, fade)
-        end
+        draw_tier_pill(ids, info.tier, x + 342, cy, 58, 40, 20, fade)
     else
         placeholder(x + 313, cy - 20, 58, 40, fade)
     end
@@ -261,12 +309,12 @@ local function draw_chart_card(ids, info, x, y, fade)
     -- NAME section: title from x+405 (14px inside the 391 plate), favourite at the far end
     local name_x, name_w = x + 405, 966
     if info.favorite then name_w = name_w - 46 end
-    local title = T(info.title, 30, { 255, 255, 255 }, rim, 5)
-    draw_text_at(title, name_x, cy, fade, name_w)
+    draw_text_at(W(info.title, 30, stroke, 5), name_x, cy, fade, name_w)
     if info.favorite then
-        local star = T("★", 30, GOLD, INK, 5)
+        local star = W("★", 30, INK, 5)
         local sw = star and star.width or 30
-        draw_text_at(star, x + 1371 - sw, cy, fade)
+        local t = T("★", 30, GOLD, INK, 5)
+        if t then draw_text_at(t, x + 1371 - sw, cy, fade) end
     end
 end
 
@@ -277,8 +325,8 @@ local function draw_folder_card(ids, row, x, y, fade)
     else frame = COLLECTION_FRAME[row.kind] or 0 end
     card_base(BAND[frame] or BAND[0], x, y, fade)
     one_plate(x, y, fade)
-    local rim = RIM[frame] or RIM[0]
-    draw_text_at(T(row.name, 30, { 255, 255, 255 }, rim, 5), x + 30, y + CARD_H / 2, fade, 1300)
+    local stroke = RIM[frame] or RIM[0]
+    draw_text_at(W(row.name, 30, stroke, 5), x + 30, y + CARD_H / 2, fade, 1300)
 end
 
 -- BACK / FILTER-SORT pair rows — FLOW 2: band + ONE plate, icon at 33, label at 83
@@ -287,11 +335,10 @@ local function draw_pair_card(ids, kind, x, y, fade)
     local band = is_back and BACK_BAND or FILTER_BAND
     card_base(band, x, y, fade)
     one_plate(x, y, fade)
-    local rim = RIM[0]
     local cy = y + CARD_H / 2
     fill_rect(x + 33, y + 25, 34, 34, INK, 200 * fade)     -- the design's icon slot
     local label = is_back and "BACK" or "FILTER/SORT"
-    draw_text_at(T(label, 30, { 255, 255, 255 }, rim, 5), x + 83, cy, fade, 800)
+    draw_text_at(W(label, 30, RIM[0], 5), x + 83, cy, fade, 800)
 end
 
 -- the DON controls strip: plate (11,4,1374,74), five 262x60 tiles at a 276 pitch
@@ -324,16 +371,13 @@ local function draw_picker(ids, model, st, x, y, fade)
         local is_cur = ((st.picker or 0) + 1) == i
         fill_rect(sx, y + 11, 262, 60, is_cur and GOLD or TAN_D, 255 * fade)
         if cell.has_course then
-            draw_centered(ids.course, sx + 51, cy, 40, 40, { frame = i - 1, fade = fade })
+            draw_art(ids, "course", sx + 51, cy, 40, 40, { frame = i - 1, fade = fade })
             local lv = math.max(1, math.min(11, cell.level or 1))
-            draw_centered(ids.level_number, sx + 97, cy, 36, 36,
-                          { frame = (i - 1) * 11 + (lv - 1), fade = fade })
+            draw_art(ids, "level_number", sx + 97, cy, 36, 36,
+                     { frame = (i - 1) * 11 + (lv - 1), fade = fade })
             draw_text_box(COURSE_NAME[i], 22, INK, TAN, 3, sx + 104, y + 11, 86, 60, fade)
             if cell.tier and cell.tier ~= "" then
-                local c = TIER_C[cell.tier]
-                if c and ids.pill then
-                    draw_centered(ids.pill, sx + 237, cy, 56, 30, { color = rgba(c), fade = fade })
-                end
+                draw_tier_pill(ids, cell.tier, sx + 237, cy, 56, 30, 18, fade)
             else
                 placeholder(sx + 209, cy - 15, 56, 30, fade)
             end
@@ -402,78 +446,76 @@ local function draw_chips(st, x, fade)
 end
 
 -- chart details panel (380x336): ink shell -> band colour -> tan plate inset 11,
--- text at +26 — FLOW 2's chart details board, at its own y stations
+-- text at +26 — FLOW 2's chart details board, at its own y stations. Every line
+-- is white-filled with the genre's own rim colour as the stroke (the skin's
+-- house style for text on a tan plate).
 local function draw_details(ids, model, st, x, y, fade)
     local h = 336
     local row = model:row(0)
     local info = model:info(0)
     local is_chart = row and row.kind == "chart" and info ~= nil
 
-    local band_frame
-    if is_chart then band_frame = REF[info.genre_index] or 0
-    elseif row and row.kind == "folder" then band_frame = REF[row.genre_index] or 0
-    else band_frame = COLLECTION_FRAME[row and row.kind or "all"] or 0 end
-    local band = BAND[band_frame] or BAND[0]
+    local frame
+    if is_chart then frame = REF[info.genre_index] or 0
+    elseif row and row.kind == "folder" then frame = REF[row.genre_index] or 0
+    else frame = COLLECTION_FRAME[row and row.kind or "all"] or 0 end
+    local band = BAND[frame] or BAND[0]
+    local stroke = RIM[frame] or RIM[0]
 
     fill_rect(x, y, 380, h, INK, 255 * fade)
     fill_rect(x + 3, y + 3, 374, h - 6, band, 255 * fade)
     fill_rect(x + 11, y + 11, 358, h - 22, TAN, 255 * fade)
 
     local tx = x + 26
-    local div = { 219, 174, 136 }              -- #DBAE88, the design's divider
     if is_chart then
-        draw_text_at(T("CHART DETAILS", 16, { 138, 106, 74 }, INK, 2), tx, y + 30, fade)
-        draw_text_at(T(info.title, 24, { 40, 30, 25 }, INK, 3), tx, y + 66, fade, 332)
-        draw_text_at(T(info.subtitle, 16, { 122, 92, 66 }, INK, 2), tx, y + 94, fade, 332)
-        fill_rect(tx, y + 122, 332, 2, div, 255 * fade)
+        draw_text_at(W("CHART DETAILS", 16, INK, 2), tx, y + 30, fade)
+        draw_text_at(W(info.title, 24, stroke, 3), tx, y + 66, fade, 332)
+        draw_text_at(W(info.subtitle, 16, stroke, 2), tx, y + 94, fade, 332)
+        fill_rect(tx, y + 122, 332, 2, DIV, 255 * fade)
 
         -- course / star / level / branch / tier (@ +134)
         local ay = y + 134
-        draw_centered(ids.course, tx + 22, ay + 22, 44, 44, { frame = info.course or 0, fade = fade })
+        draw_art(ids, "course", tx + 22, ay + 22, 44, 44, { frame = info.course or 0, fade = fade })
         if info.branching then
-            draw_centered(ids.branch, tx + 46, ay + 36, 20, 20, { fade = fade })
+            draw_art(ids, "branch", tx + 46, ay + 36, 20, 20, { fade = fade })
         end
-        draw_centered(ids.star, tx + 90, ay + 22, 24, 24, { frame = info.course or 0, fade = fade })
+        draw_art(ids, "star", tx + 90, ay + 22, 24, 24, { frame = info.course or 0, fade = fade })
         local lv = math.max(1, math.min(11, info.level or 1))
-        draw_centered(ids.level_number, tx + 131, ay + 21, 42, 42,
-                      { frame = (info.course or 0) * 11 + (lv - 1), fade = fade })
+        draw_art(ids, "level_number", tx + 131, ay + 21, 42, 42,
+                 { frame = (info.course or 0) * 11 + (lv - 1), fade = fade })
         if info.tier and info.tier ~= "" then
-            local c = TIER_C[info.tier]
-            if c and ids.pill then
-                draw_centered(ids.pill, tx + 186, ay + 20, 52, 36, { color = rgba(c), fade = fade })
-                draw_text_box(info.tier, 18, { 255, 255, 255 }, INK, 2, tx + 160, ay + 2, 52, 36, fade)
-            end
+            draw_tier_pill(ids, info.tier, tx + 186, ay + 20, 52, 36, 18, fade)
         else
             placeholder(tx + 160, ay + 2, 52, 36, fade)
         end
 
-        fill_rect(tx, y + 196, 332, 2, div, 255 * fade)
-        draw_text_at(T("SCORE", 14, { 138, 106, 74 }, INK, 2), tx, y + 206, fade)
+        fill_rect(tx, y + 196, 332, 2, DIV, 255 * fade)
+        draw_text_at(W("SCORE", 14, INK, 2), tx, y + 206, fade)
         if info.played then
-            draw_text_at(T(fmt_num(info.score), 30, { 40, 30, 25 }, INK, 3), tx, y + 237, fade, 230)
-            draw_text_at(T("GOOD", 16, { 107, 74, 46 }, INK, 2), tx, y + 258, fade)
-            draw_text_at(T(tostring(info.good or 0), 16, INK, TAN, 2), tx + 90, y + 258, fade)
-            draw_text_at(T("OK", 16, { 107, 74, 46 }, INK, 2), tx, y + 278, fade)
-            draw_text_at(T(tostring(info.ok or 0), 16, INK, TAN, 2), tx + 90, y + 278, fade)
-            draw_text_at(T("MISS", 16, { 107, 74, 46 }, INK, 2), tx, y + 298, fade)
-            draw_text_at(T(tostring(info.miss or 0), 16, INK, TAN, 2), tx + 90, y + 298, fade)
+            draw_text_at(W(fmt_num(info.score), 30, stroke, 3), tx, y + 237, fade, 230)
+            draw_text_at(W("GOOD", 16, stroke, 2), tx, y + 258, fade)
+            draw_text_at(W(tostring(info.good or 0), 16, stroke, 2), tx + 90, y + 258, fade)
+            draw_text_at(W("OK", 16, stroke, 2), tx, y + 278, fade)
+            draw_text_at(W(tostring(info.ok or 0), 16, stroke, 2), tx + 90, y + 278, fade)
+            draw_text_at(W("MISS", 16, stroke, 2), tx, y + 298, fade)
+            draw_text_at(W(tostring(info.miss or 0), 16, stroke, 2), tx + 90, y + 298, fade)
             if info.rank and info.rank > 0 then
-                draw_centered(ids.rank, x + 320, y + 224, 40, 40, { frame = info.rank - 1, fade = fade })
+                draw_art(ids, "rank", x + 320, y + 224, 40, 40, { frame = info.rank - 1, fade = fade })
             else
                 placeholder(x + 300, y + 204, 40, 40, fade)
             end
             if info.crown and info.crown > 0 then
-                draw_centered(ids.crown, x + 320, y + 272, 40, 40, { frame = info.crown, fade = fade })
+                draw_art(ids, "crown", x + 320, y + 272, 40, 40, { frame = info.crown, fade = fade })
             else
                 placeholder(x + 300, y + 252, 40, 40, fade)
             end
         else
             placeholder(tx, y + 220, 230, 34, fade)
-            draw_text_at(T("NO SCORE", 20, { 150, 130, 112 }, INK, 2), tx + 244, y + 237, fade)
+            draw_text_at(W("NO SCORE", 20, stroke, 2), tx + 244, y + 237, fade)
         end
     else
-        draw_text_at(T("FOLDER", 16, { 138, 106, 74 }, INK, 2), tx, y + 30, fade)
-        draw_text_at(T(row and row.name or "", 26, { 40, 30, 25 }, INK, 3), tx, y + 66, fade, 332)
+        draw_text_at(W("FOLDER", 16, INK, 2), tx, y + 30, fade)
+        draw_text_at(W(row and row.name or "", 26, stroke, 3), tx, y + 66, fade, 332)
         local sub
         if row and row.kind == "folder" then
             sub = fmt_num(row.count or 0) .. " charts under this folder"
@@ -482,7 +524,7 @@ local function draw_details(ids, model, st, x, y, fade)
         else
             sub = "a folder, not a chart"
         end
-        draw_text_at(T(sub, 16, { 122, 92, 66 }, INK, 2), tx, y + 94, fade, 332)
+        draw_text_at(W(sub, 16, stroke, 2), tx, y + 94, fade, 332)
     end
 end
 
@@ -494,14 +536,14 @@ local DLG_X, DLG_Y, DLG_W, DLG_H = 360, 190, 1200, 700
 
 local function dlg_row_label(text2, cy, active, fade)
     if active then fill_rect(DLG_X + 34, cy - 22, 252, 44, GOLD, 255 * fade) end
-    local t = T(text2, 26, INK, TAN, 3)
-    if t then draw_text_at(t, DLG_X + 40, cy, fade) end
+    draw_text_at(W(text2, 26, INK, 3), DLG_X + 40, cy, fade)
 end
 
 local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade)
     fill_rect(x, y, w, h, fillc or TAN_D, 255 * fade)
-    draw_text_box(label, text_size or 24, text_fill or INK, outline or TAN,
-                  (text_size or 24) >= 24 and 3 or 2, x, y, w, h, fade)
+    local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
+                (text_size or 24) >= 24 and 3 or 2)
+    if t then draw_text_at(t, x + (w - t.width) / 2, y + h / 2, fade, w - 4) end
 end
 
 local function draw_filter_dialog(model, st, fade)
@@ -513,7 +555,7 @@ local function draw_filter_dialog(model, st, fade)
     fill_rect(DLG_X, DLG_Y, DLG_W, DLG_H, INK, 255 * fade)             -- shell
     fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, DLG_H - 6, TAN, 255 * fade)
     fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade)  -- header
-    draw_text_at(T("FILTER/SORT", 30, INK, TAN, 3), DLG_X + 36, DLG_Y + 34, fade)
+    draw_text_at(W("FILTER/SORT", 30, INK, 3), DLG_X + 36, DLG_Y + 34, fade)
 
     -- DIFFICULTY — on/off per course
     dlg_row_label("DIFFICULTY", DLG_Y + 128, row_active == 0, fade)
@@ -525,7 +567,8 @@ local function draw_filter_dialog(model, st, fade)
         fill_rect(x, y, 166, 64, is_cursor and GOLD or TAN_D, 255 * fade)
         fill_rect(x + 14, y + 15, 34, 34, TAN, 255 * fade)
         if d[i] then fill_rect(x + 19, y + 20, 24, 24, INK, 255 * fade) end
-        draw_text_box(COURSE_NAME[i], 22, INK, TAN, 3, x + 52, y, 106, 64, fade)
+        local t = T(COURSE_NAME[i], 22, INK, TAN, 3)
+        if t then draw_text_at(t, x + 52 + (106 - t.width) / 2, y + 32, fade) end
     end
 
     -- STAR — ALL, then 1..10 (no 10+ bucket: this library tops out at ★10)
@@ -558,9 +601,7 @@ local function draw_filter_dialog(model, st, fade)
                     or (st.tier == tv)
         local fillc = TAN_D
         if tv ~= "ALL" and tv ~= "None" then fillc = TIER_C[tv] or TAN_D end
-        dlg_cell(x, DLG_Y + 296, w, 44, shown, fillc,
-                 (tv == "ALL" or tv == "None") and INK or { 255, 255, 255 },
-                 tv == "None" and 18 or 22, tv == "None" and TAN or INK, fade)
+        dlg_cell(x, DLG_Y + 296, w, 44, shown, fillc, WHITE, 22, INK, fade)
         if is_cur then
             -- current value: a gold ring, so the tier's own colour still reads
             local a = 255 * fade
@@ -577,7 +618,7 @@ local function draw_filter_dialog(model, st, fade)
     for i, sv in ipairs({ "SCORE", "CROWN", "A–Z", "TIER" }) do
         local x = DLG_X + 290 + (i - 1) * 216
         dlg_cell(x, DLG_Y + 396, 208, 64, sv, (sv == sort_disp) and GOLD or TAN_D,
-                 INK, nil, nil, fade)
+                 WHITE, 24, INK, fade)
     end
 
     -- footer — the live match count (a short list reads as filtered, not broken)
@@ -590,7 +631,7 @@ local function draw_filter_dialog(model, st, fade)
     else
         match = fmt_num(st.charts or 0) .. " charts match"
     end
-    draw_text_at(T(match, 24, INK, TAN, 3), DLG_X + 64, DLG_Y + 538, fade, DLG_W - 128)
+    draw_text_at(W(match, 24, INK, 3), DLG_X + 64, DLG_Y + 538, fade, DLG_W - 128)
 end
 
 -- footer control hints (the FLOW 1 / FLOW 5 guides)
@@ -623,12 +664,11 @@ function M.draw(self, model)
 
     -- header: art band (the design's own placeholder slot) + the open context's name
     fill_rect(56, 24, 352, 80, INK, 70)
-    draw_text_at(T("Select a song", 40, { 232, 64, 49 }, { 255, 255, 255 }, 4), 60, 64, 1.0, 400)
-    draw_text_at(T("SONG SELECT — " .. (st.label or "root"), 26, { 58, 42, 16 }, TAN, 4),
-                 60, 131, 1.0, 900)
+    draw_text_at(T("Select a song", 40, { 232, 64, 49 }, WHITE, 4), 60, 64, 1.0, 400)
+    draw_text_at(W("SONG SELECT — " .. (st.label or "root"), 26, INK, 3), 60, 131, 1.0, 900)
 
     if st.building and not st.filter_open then
-        draw_text_at(T("BUILDING LIST…", 36, { 60, 40, 30 }, INK, 3), LX, 700, 1.0)
+        draw_text_at(W("BUILDING LIST…", 36, INK, 3), LX, 700, 1.0)
         return true
     end
 

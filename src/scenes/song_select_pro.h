@@ -30,6 +30,16 @@ public:
         SongBox::reset_bgm_slot();
         audio.play_sound("bgm", VolumePreset::MUSIC);
         script = std::make_unique<SongSelectScript>();
+        // The engine's own player object. It owns Don-chan (a `chara` built from
+        // the saved player data) and the nameplate card, and it draws the option
+        // panel itself. Pro borrows the engine's one rather than reimplementing
+        // any of it, so the character and the card land on the same skin_config
+        // stations the wheel uses (song_select_chara_1p / _nameplate_1p).
+        player = std::make_unique<SongSelectPlayer>(global_data.player_num);
+        player->script = script.get();
+        // The pro layout runs a panel down to y 730; Don-chan at full size reaches
+        // up to y 684 and would sit over it. 0.8 brings his visible top to ~732.
+        player->chara_scale = 0.8f;
         // The boot loading screen preloads the navigator's library scan; this
         // call early-returns when that already ran. Pro reads the library
         // through the seam either way — it never builds the wheel.
@@ -54,6 +64,7 @@ public:
     std::optional<Screens> update() override {
         Screen::update();
         const double now = get_current_ms();
+        if (player) player->update(now);   // Don-chan + nameplate animation
 
         if (!library_ready_ && navigator.song_files_ready.load()) {
             library_ready_ = true;
@@ -115,11 +126,11 @@ public:
         bool drawn = false;
         if (script && library_ready_) drawn = script->draw_pro(model.get());
         if (!drawn) draw_fallback();
-        // Play Options (the chart's SETTINGS) — the wheel's own panel, drawn by
-        // the skin through draw_option_panel(), over the frozen pro screen.
-        if (state_ == UiState::OPTIONS && player_ && player_->modifier_selector.has_value()) {
-            script->draw_option_panel(player_.get(), 1);
-        }
+        // Don-chan + the player card, and the Play Options panel when it is open
+        // (SongSelectPlayer::draw calls the skin's draw_option_panel itself).
+        // The player goes last because song_select's own backdrop is a full-screen
+        // texture: drawn first, the character is simply painted over.
+        if (player) player->draw(state, false, 1.0f);
         if (search_box.has_value()) search_box->draw();
         if (game_transition.has_value()) game_transition->draw();
     }
@@ -128,7 +139,6 @@ private:
     enum class UiState { BROWSING, SELECTED, PICKER, OPTIONS, FILTER, SEARCH };
 
     std::unique_ptr<ProListModel> model;
-    std::unique_ptr<SongSelectPlayer> player_;   // lazily, for Play Options only
     Screens game_target_ = Screens::GAME;
     bool library_ready_ = false;
     UiState state_ = UiState::BROWSING;
@@ -184,10 +194,10 @@ private:
                          ray::IsKeyPressed(ray::KEY_ENTER);
 
         if (state_ == UiState::OPTIONS) {
-            if (player_ && player_->modifier_selector.has_value()) {
-                if (l_kat) { audio.play_sound("kat", VolumePreset::SOUND); player_->modifier_selector->left(); }
-                if (r_kat) { audio.play_sound("kat", VolumePreset::SOUND); player_->modifier_selector->right(); }
-                if (don)   { audio.play_sound("don", VolumePreset::SOUND); player_->modifier_selector->confirm(); }
+            if (player && player->modifier_selector.has_value()) {
+                if (l_kat) { audio.play_sound("kat", VolumePreset::SOUND); player->modifier_selector->left(); }
+                if (r_kat) { audio.play_sound("kat", VolumePreset::SOUND); player->modifier_selector->right(); }
+                if (don)   { audio.play_sound("don", VolumePreset::SOUND); player->modifier_selector->confirm(); }
             }
             return;
         }
@@ -371,31 +381,28 @@ private:
 
     // ---- Play Options (the skin's modifier panel) -----------------------
     void open_options() {
-        if (!player_) {
-            player_ = std::make_unique<SongSelectPlayer>(global_data.player_num);
-            player_->script = script.get();
-        }
-        player_->modifier_selector.emplace(global_data.player_num, &player_->player_data);
+        if (!player) return;
+        player->modifier_selector.emplace(global_data.player_num, &player->player_data);
         state_ = UiState::OPTIONS;
         spdlog::info("[pro] play options opened");
     }
 
     void close_options() {
-        if (player_ && player_->modifier_selector.has_value()) {
-            scores_manager.save_player_data(player_->player_data);
-            player_->modifier_selector.reset();
+        if (player && player->modifier_selector.has_value()) {
+            scores_manager.save_player_data(player->player_data);
+            player->modifier_selector.reset();
         }
         state_ = UiState::SELECTED;
         spdlog::info("[pro] play options closed");
     }
 
     void update_options(double now) {
-        if (!player_ || !player_->modifier_selector.has_value()) {
+        if (!player || !player->modifier_selector.has_value()) {
             state_ = UiState::SELECTED;
             return;
         }
-        player_->modifier_selector->update(now);
-        if (player_->modifier_selector->is_finished) close_options();
+        player->modifier_selector->update(now);
+        if (player->modifier_selector->is_finished) close_options();
     }
 
     // ---- search ---------------------------------------------------------
