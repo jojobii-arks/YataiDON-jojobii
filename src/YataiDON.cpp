@@ -826,7 +826,14 @@ int main(int argc, char* argv[]) {
 
     rlSetBlendFactorsSeparate(RL_SRC_ALPHA, RL_ONE_MINUS_SRC_ALPHA, RL_ONE, RL_ONE_MINUS_SRC_ALPHA, RL_FUNC_ADD, RL_FUNC_ADD);
     ray::SetExitKey(ray::KEY_NULL);
-    ray::HideCursor();
+    // Joseph 2026-10-13: keep the pointer visible on EVERY screen, for the whole run.
+    // Upstream hides it here at boot and only practice mode (game_practice.cpp) and the
+    // F7 debug menu ever bring it back, which left the mouse-driven drill screens with no
+    // visible pointer at all.
+#ifdef ShowCursor
+#undef ShowCursor
+#endif
+    ray::ShowCursor();
 
     L.next_frame_time = std::chrono::steady_clock::now();
 #ifdef __EMSCRIPTEN__
