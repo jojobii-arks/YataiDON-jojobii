@@ -49,6 +49,10 @@ public:
         // and the preview's own slot, so a re-entry can never inherit a stream
         // that the previous visit left playing
         preview_.release();
+        // The restore cursor has not been applied yet this visit; the snapshot it
+        // reads from (`restore_`) deliberately SURVIVES, because this is the field
+        // that carries the browse position across a visit.
+        wait_restore_ = false;
         SongBox::reset_bgm_slot();
         audio.play_sound("bgm", VolumePreset::MUSIC);
         script = std::make_unique<SongSelectScript>();
@@ -71,14 +75,19 @@ public:
         load_pro_config();
         if (navigator.song_files_ready.load()) {
             library_ready_ = true;
-            model->reset_root();
-            spdlog::info("[pro] library ready at entry; root rows: {}", model->row_count());
+            begin_initial_context();
+            spdlog::info("[pro] library ready at entry; initial rows: {}", model->row_count());
         }
         spdlog::info("pro_select: entered (v2) - transient state reset (transition cleared, state BROWSING)");
     }
 
     Screens on_screen_end(Screens next_screen) override {
         if (search_box.has_value()) set_keyboard_visible(false);
+        // Record where the user is leaving from, so the next entry can return to
+        // it. Written for EVERY exit — play, practice, ESC out, the result screen,
+        // even the main menu — because this is just the list's context + cursor,
+        // never anything that drives the transition.
+        remember_position();
         // The "preview" stream is ours while it plays: stop it before the base
         // unloads all audio, and never leave another screen a song playing.
         preview_.release();
@@ -93,10 +102,17 @@ public:
 
         if (!library_ready_ && navigator.song_files_ready.load()) {
             library_ready_ = true;
-            model->reset_root();
-            spdlog::info("[pro] library ready; root rows: {}", model->row_count());
+            begin_initial_context();
+            spdlog::info("[pro] library ready; initial rows: {}", model->row_count());
         }
         if (library_ready_) model->update();
+        // The target context's rows are built in chunks, so the saved cursor can
+        // only be re-established once the build has settled — and only then can it
+        // be clamped to a list that may have changed size.
+        if (wait_restore_ && library_ready_ && model->ready()) {
+            apply_restore_cursor();
+            wait_restore_ = false;
+        }
 
         // TAB toggles the Filter/Sort dialog (the filter card row does the same).
         if (!game_transition.has_value() && check_key_pressed(ray::KEY_TAB)) {
@@ -176,6 +192,122 @@ private:
     UiState state_ = UiState::BROWSING;
     double last_moved_ = -1e9;
     double search_guard_until_ = 0.0;
+
+    // ---- return-to-position --------------------------------------------
+    // The screen object outlives a visit (the screens table is built once), but
+    // the list model does NOT — it is rebuilt in on_screen_start. This snapshot
+    // is the browse position carried across a visit: WRITTEN in on_screen_end
+    // (every exit), READ in on_screen_start through begin_initial_context().
+    // It holds only list state (context, folder, filter/sort, the cursor's row
+    // identity) and is never consulted by the transition code, so it cannot
+    // re-arm the stale game_transition the entry reset clears.
+    struct BrowseRestore {
+        ProListModel::Context context = ProListModel::Context::ROOT;
+        std::filesystem::path folder_path;              // FOLDER only
+        std::string label;                              // context_label_ as shown
+        int genre_index = 0;                            // context_genre_index_ as shown
+        ProListModel::Filter filter;                    // filter in force
+        ProListModel::Sort sort = ProListModel::Sort::ALPHA;   // sort in force
+        std::string search_query;                       // SEARCH only
+        // The cursor's row, by identity so it survives a rebuild that reorders or
+        // resizes the list: a CHART row is (song_path, course); any other row is
+        // (kind, name).
+        bool anchor_chart = false;
+        std::filesystem::path song_path;
+        int course = -1;
+        ProListModel::RowKind row_kind = ProListModel::RowKind::CHART;
+        std::string row_name;
+        int cursor = 0;                                 // last-resort fallback index
+    };
+    std::optional<BrowseRestore> restore_;   // SURVIVES a visit — never reset on entry
+    bool wait_restore_ = false;              // per-visit: cursor not applied yet
+
+    void remember_position() {
+        if (!model) return;
+        BrowseRestore r;
+        r.context = model->context();
+        r.folder_path = model->folder_path();
+        r.label = model->context_label();
+        r.genre_index = model->context_genre_index();
+        r.filter = model->filter();
+        r.sort = model->sort();
+        r.search_query = model->search_query();
+        r.cursor = model->cursor();
+        if (model->row_count() > 0) {
+            const ProListModel::Row& row = model->cursor_row();
+            r.row_kind = row.kind;
+            r.row_name = row.name;
+            if (row.kind == ProListModel::RowKind::CHART) {
+                r.anchor_chart = true;
+                r.song_path = row.song_path;
+                r.course = row.course;
+            }
+        }
+        restore_ = std::move(r);
+        spdlog::info("[pro] position remembered: ctx {} cursor {} anchor {}",
+                     (int)restore_->context, restore_->cursor,
+                     restore_->anchor_chart ? "chart" : "row");
+    }
+
+    // First context for a visit: the remembered one when there is one, else the
+    // root. reset_root() keeps its meaning — it is what this falls back to, and
+    // what a true reset still calls.
+    void begin_initial_context() {
+        if (!restore_.has_value() || restore_->context == ProListModel::Context::ROOT) {
+            model->reset_root();
+            spdlog::info("[pro] no position to restore; root");
+            return;
+        }
+        const BrowseRestore& r = *restore_;
+        // Apply filter/sort FIRST: while the context is still ROOT set_sort() does
+        // not rebuild, so the target context opens with exactly one build.
+        model->filter() = r.filter;
+        model->set_sort(r.sort);
+        if (r.context == ProListModel::Context::SEARCH) {
+            if (r.search_query.empty()) { model->reset_root(); return; }
+            model->open_search(r.search_query);
+            wait_restore_ = true;
+            spdlog::info("[pro] restore SEARCH '{}' (cursor pending build)", r.search_query);
+            return;
+        }
+        if (!model->open_saved_context(r.context, r.folder_path, r.label, r.genre_index)) {
+            // The remembered folder is gone (renamed / moved / deleted): land on
+            // the root rather than a phantom context.
+            spdlog::warn("[pro] saved folder '{}' is gone; falling back to root",
+                         r.folder_path.string());
+            model->reset_root();
+            return;
+        }
+        wait_restore_ = true;
+        spdlog::info("[pro] restore ctx {} '{}' (cursor pending build)", (int)r.context, r.label);
+    }
+
+    void apply_restore_cursor() {
+        if (!restore_ || !model) return;
+        const BrowseRestore& r = *restore_;
+        const int n = model->row_count();
+        if (n <= 0) return;
+        int target = -1;
+        for (int i = 0; i < n; ++i) {
+            const ProListModel::Row& row = model->row_at(i);
+            if (r.anchor_chart) {
+                if (row.kind == ProListModel::RowKind::CHART && row.course == r.course &&
+                    row.song_path == r.song_path) { target = i; break; }
+            } else if (row.kind == r.row_kind && row.name == r.row_name) {
+                target = i; break;
+            }
+        }
+        if (target < 0) {
+            // The exact row is gone (filter changed the row count, the chart left
+            // the collection): clamp the remembered index into the rebuilt list.
+            target = std::clamp(r.cursor, 0, n - 1);
+            spdlog::info("[pro] restore anchor missing; clamped {} -> {} / {}", r.cursor, target, n);
+        } else {
+            spdlog::info("[pro] restore cursor -> {} / {} ({})", target, n,
+                         r.anchor_chart ? "chart" : "row");
+        }
+        model->set_cursor(target);
+    }
 
     static constexpr double kSkipWindowMs = 50.0;   // two kats inside 50 ms = ±10 skip
 

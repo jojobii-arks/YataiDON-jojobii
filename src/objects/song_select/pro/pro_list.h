@@ -100,8 +100,17 @@ public:
     bool in_folder() const { return context_ != Context::ROOT; }
     void open_folder_row(int row_index);  // FOLDER / RECENT / FAVORITE / ALL / SEARCH row
     void back_to_root();
+    // Enter a saved browse context directly (return-to-position). ROOT and the
+    // collections just set the context; a FOLDER whose directory is gone returns
+    // false so the caller can fall back to reset_root(). label / genre_index are
+    // the values the header + backdrop carried when the position was saved.
+    // SEARCH is not served here — the caller re-runs open_search() with the query.
+    bool open_saved_context(Context ctx, const std::filesystem::path& folder_path,
+                            const std::string& label, int genre_index);
     // What the header names: "root", the folder's own name, or the collection.
     const std::string& context_label() const { return context_label_; }
+    // The folder of the open FOLDER context (empty otherwise) — for the snapshot.
+    const std::filesystem::path& folder_path() const { return folder_path_; }
 
     // ---- building -----------------------------------------------------
     bool ready() const { return !building_; }

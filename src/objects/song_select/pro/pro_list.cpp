@@ -162,6 +162,30 @@ void ProListModel::back_to_root() {
     begin_build();
 }
 
+bool ProListModel::open_saved_context(Context ctx, const fs::path& folder_path,
+                                      const std::string& label, int genre_index) {
+    if (ctx == Context::ROOT) {
+        reset_root();
+        return true;
+    }
+    if (ctx == Context::FOLDER) {
+        // A folder that has been renamed, moved or deleted cannot be returned to;
+        // the caller resets to root rather than opening a phantom context.
+        std::error_code ec;
+        if (folder_path.empty() || !fs::is_directory(folder_path, ec)) return false;
+    }
+    selected_ = false;
+    clear_swap();
+    context_ = ctx;
+    folder_path_ = (ctx == Context::FOLDER) ? folder_path : fs::path{};
+    context_label_ = label;
+    // genre_index is the effective value the snapshot stored (open_folder_row's
+    // RECENT=9 / collection=0 clamp already applied when it was taken).
+    context_genre_ = genre_index;
+    begin_build();
+    return true;
+}
+
 // ---- building -------------------------------------------------------------
 
 void ProListModel::begin_build() {
