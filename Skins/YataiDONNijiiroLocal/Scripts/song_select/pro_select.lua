@@ -239,6 +239,7 @@ end
 -- `diff_sort/level_box`, which is a ROUNDED white pill — it pilled every card.)
 local FILL_NAT_W, FILL_NAT_H = 8, 8
 local FILL_TEX = nil            -- resolved in M._ids()
+local ROUND = { [6] = {}, [13] = {} }   -- corner pieces, resolved in M._ids()
 
 local function fill_rect(x, y, w, h, c, a)
     if not FILL_TEX then return end
@@ -257,6 +258,42 @@ local function fill_rgb(x, y, w, h, r, g, b, a)
     fill_rect(x, y, w, h, { r, g, b }, a)
 end
 
+-- ROUNDED fill — the same white-plate path as fill_rect, with real corner arcs
+-- (Joseph 2026-10-13: "implement the roundness of nijiro's design into our pro
+-- select UI"). The engine has no rounded primitive and no blend-to-erase, so the
+-- shape is built as a PLUS (two flat bands through the middle, which never reach
+-- the corners) plus four corner pieces whose outside-the-arc pixels are
+-- transparent — the assets live in this skin's own pro_ui folder
+-- (round{6,13}_{tl,tr,bl,br}.png, generated 2026-10-13). `mask` switches corners
+-- back to square where a piece must sit flush with a neighbour: the selected
+-- card goes square on its bottom edge and the section square on its top, so the
+-- two read as ONE rounded block.
+local function fill_round(x, y, w, h, c, a, r, mask)
+    r = r or 13
+    local rr = ROUND[r]
+    if not (rr and rr.tl) or w < 2 * r or h < 2 * r then return fill_rect(x, y, w, h, c, a) end
+    fill_rect(x + r, y, w - 2 * r, h, c, a)             -- vertical band
+    fill_rect(x, y + r, w, h - 2 * r, c, a)             -- horizontal band
+    if mask then
+        if not mask.tl then fill_rect(x, y, r, r, c, a) end
+        if not mask.tr then fill_rect(x + w - r, y, r, r, c, a) end
+        if not mask.bl then fill_rect(x, y + h - r, r, r, c, a) end
+        if not mask.br then fill_rect(x + w - r, y + h - r, r, r, c, a) end
+    end
+    local col = { c[1], c[2], c[3], 255 }
+    local fade = (a or 255) / 255
+    local xr, yb = math.floor(x + w - r + 0.5), math.floor(y + h - r + 0.5)
+    local x0, y0 = math.floor(x + 0.5), math.floor(y + 0.5)
+    if ((not mask) or mask.tl) and rr.tl then
+        tex.draw_texture(rr.tl, { x = x0, y = y0, color = col, fade = fade }) end
+    if ((not mask) or mask.tr) and rr.tr then
+        tex.draw_texture(rr.tr, { x = xr, y = y0, color = col, fade = fade }) end
+    if ((not mask) or mask.bl) and rr.bl then
+        tex.draw_texture(rr.bl, { x = x0, y = yb, color = col, fade = fade }) end
+    if ((not mask) or mask.br) and rr.br then
+        tex.draw_texture(rr.br, { x = xr, y = yb, color = col, fade = fade }) end
+end
+
 -- The tier pill: a flat plate in the tier colour with a 2px ink rim, drawn the
 -- same way as the card base. Deliberately NOT `modifier/mod_box` — that art is
 -- packed into a sheet and drawn at its native 184x40 by the options panel, and
@@ -265,8 +302,8 @@ end
 local function draw_tier_pill(ids, tier, cx, cy, w, h, text_size, fade)
     local c = TIER_C[tier]
     if not c then return end
-    fill_rect(cx - w / 2, cy - h / 2, w, h, INK, 255 * fade)
-    fill_rect(cx - w / 2 + 2, cy - h / 2 + 2, w - 4, h - 4, c, 255 * fade)
+    fill_round(cx - w / 2, cy - h / 2, w, h, INK, 255 * fade, 13)
+    fill_round(cx - w / 2 + 2, cy - h / 2 + 2, w - 4, h - 4, c, 255 * fade, 13)
     local t = W(tier, text_size or 20, INK, 2)
     if t then draw_text_at(t, cx - t.width / 2, cy, fade) end
 end
@@ -276,8 +313,8 @@ end
 -- reads exactly like the arcade board it comes from: saturated band frame with a
 -- light panel inside it (Joseph 2026-10-13: the card + details follow the genre,
 -- two-tone like the raw Nijiiro board assets).
-local function card_base(band, x, y, fade)
-    fill_rect(x, y, CARD_W, CARD_IN, band, 255 * fade)
+local function card_base(band, x, y, fade, mask)
+    fill_round(x, y, CARD_W, CARD_IN, band, 255 * fade, 13, mask)
 end
 
 -- the three plates of a CHART card: SCORE(11,118) | LEVEL(135,250) |
@@ -285,16 +322,16 @@ end
 -- is the band's light panel tone, so the plate reads light while the border ring
 -- and the 6px seams between the plates stay the saturated band.
 local function chart_plates(x, y, fade, fill)
-    fill_rect(x + 11, y + 11, 118, PLATE_H, fill, 255 * fade)
-    fill_rect(x + 135, y + 11, 250, PLATE_H, fill, 255 * fade)
-    fill_rect(x + 391, y + 11, 994, PLATE_H, fill, 255 * fade)
+    fill_round(x + 11, y + 11, 118, PLATE_H, fill, 255 * fade, 13)
+    fill_round(x + 135, y + 11, 250, PLATE_H, fill, 255 * fade, 13)
+    fill_round(x + 391, y + 11, 994, PLATE_H, fill, 255 * fade, 13)
 end
 
 -- the single plate a FOLDER / BACK / FILTER card carries (11,11,1374,62); `fill`
 -- is the light panel of the card's band (folder = its genre, BACK / FILTER = their
 -- own colours), so the card's border ring stays the saturated band.
 local function one_plate(x, y, fade, fill)
-    fill_rect(x + 11, y + 11, 1374, PLATE_H, fill, 255 * fade)
+    fill_round(x + 11, y + 11, 1374, PLATE_H, fill, 255 * fade, 13)
 end
 
 -- ink-outline placeholder for a missing value (2px box, 30% ink)
@@ -369,6 +406,95 @@ local function draw_clamp(x, y, w, h, fade)
     clamp_cap(x + w, y, h, false, fade, arm, ov, 0)
 end
 
+-- ---------------------------------------------------------------- animation
+-- Every animated value on this screen lives here, view-side. The engine calls
+-- SongSelect:draw_pro once per frame while the screen is live (engine:
+-- ProSongSelectScreen::draw -> SongSelectScript::draw_pro), so the view eases
+-- its own values toward whatever the model reports and stays purely a skin
+-- concern — no C++ is involved, nothing to rebuild.
+--
+-- The clock is os.clock(); if a future sandbox strips it the frame counter
+-- keeps the screen animating at an assumed 60 fps, and one diagnostic line is
+-- printed per run with the measured draw rate (the durations were tuned on it).
+--
+-- The eases, all ease-out-cubic:
+--   scroll (0.20 s) — the list SLIDES: `anim.scroll` holds the view's centre in
+--     ROW units (a float cursor). A one-row kat eases it a row; anything longer
+--     (a ±10 skip, a wrap, a rebuilt list) snaps. `sl` is the residual slide;
+--     every row, the section and the clamp ride it, so the cursor's card slides
+--     in under the clamp instead of jumping.
+--   sec (0.24 s) — the DON section UNFOLDS 0 -> SUB_H: the rows below slide
+--     down with it, the clamp grows with it, and the option buttons emerge from
+--     behind the card's bottom edge (fading in, 26 px low). Deselecting folds
+--     it back the same way instead of vanishing.
+--   ctrl / pick (0.13 s) — the gold bracket slides between the five option
+--     buttons, and between the picker's segments. The picker snaps on a skip
+--     over an absent segment (its cursor skips those), because sliding across a
+--     disabled segment reads wrong.
+local ANIM_SCROLL = 0.20
+local ANIM_SEC    = 0.24
+local ANIM_STEP   = 0.13
+
+-- The clock is tex.get_current_ms() — the same wall clock the wheel's own
+-- animation layer already runs on (song_select.lua's guide timer). The sandbox
+-- has NO `os` table (probed 2026-10-13: os=nil — a straight os.clock() threw and
+-- blanked the screen), and the engine is UNCAPPED (a hidden dev window measured
+-- ~5000 draw calls/s, ~360 visible), so counting frames is meaningless: every
+-- ease below is wall time, in ms, and reads the same at any frame rate. If the
+-- binding ever disappears the frame counter at an assumed 60 fps keeps the UI
+-- animating instead of breaking.
+local ANIM_FPS = 60
+local anim_frames, anim_now = 0, 0
+local function anim_clock()
+    local t = tex.get_current_ms and tex.get_current_ms()
+    if type(t) == "number" then
+        anim_now = t / 1000.0
+    else
+        anim_frames = anim_frames + 1
+        anim_now = anim_frames / ANIM_FPS
+    end
+    return anim_now
+end
+
+local function ease_out(t) return 1 - (1 - t) * (1 - t) * (1 - t) end
+
+local anim = {
+    scroll = { from = 0, to = 0, t0 = 0, dur = ANIM_SCROLL, val = 0 },
+    sec    = { from = 0, to = 0, t0 = 0, dur = ANIM_SEC,    val = 0 },
+    ctrl   = { from = 0, to = 0, t0 = 0, dur = ANIM_STEP,   val = 0 },
+    pick   = { from = 0, to = 0, t0 = 0, dur = ANIM_STEP,   val = 0 },
+}
+local anim_sig_last, anim_selected, anim_picker_open = nil, false, false
+
+local function anim_set(a, to, dur)
+    a.from = a.val
+    a.to = to
+    a.t0 = anim_now
+    a.dur = dur
+end
+
+local function anim_val(a)
+    if a.val == a.to then return a.val end
+    if a.dur and a.dur <= 0 then a.val = a.to; return a.val end
+    local t = (anim_now - a.t0) / a.dur
+    if t >= 1 then a.val = a.to; return a.val end
+    if t < 0 then t = 0 end
+    a.val = a.from + (a.to - a.from) * ease_out(t)
+    return a.val
+end
+
+-- what makes the LIST a different list (a rebuild, not a walk): context, sort,
+-- filter values, row count, the CHANGE DIFF course, the building flag and the
+-- filter dialog. None of these should ever slide.
+local function anim_sig(st)
+    local d = st.diff or {}
+    return table.concat({ st.context or "", st.sort or "", tostring(st.star or 0),
+        st.tier or "", tostring(st.rows or 0), tostring(st.active_course or -1),
+        d[1] and "1" or "0", d[2] and "1" or "0", d[3] and "1" or "0",
+        d[4] and "1" or "0", d[5] and "1" or "0",
+        st.building and "b" or "", st.filter_open and "f" or "" })
+end
+
 -- ------------------------------------------------------------------- ids
 local function resolve_ids(t)
     t.background   = tex.get_texture("song_select/box/background")
@@ -381,6 +507,10 @@ local function resolve_ids(t)
     t.level_box    = get_any("pro_ui", "fill")           -- our own 8x8 solid white fill plate
     t.back_icon    = get_any("diff_select", "back")     -- the BACK badge, 128x128
     t.option_icon  = get_any("diff_select", "option")   -- the SETTINGS badge, 128x128
+    for _, rn in ipairs({ "round6_tl", "round6_tr", "round6_bl", "round6_br",
+                          "round13_tl", "round13_tr", "round13_bl", "round13_br" }) do
+        t[rn] = get_any("pro_ui", rn)
+    end
 end
 
 function M._ids()
@@ -391,7 +521,7 @@ function M._ids()
     local t = M._ids_t
     local complete = t.background and t.star and t.level_number and t.rank
                  and t.crown and t.course and t.branch
-                 and t.back_icon and t.option_icon and t.level_box
+                 and t.back_icon and t.option_icon and t.level_box and t.round13_tl
     -- A folder that is not resident yet resolves to nil on the first frames, and
     -- caching that nil would blank the art for the whole session. Retry the
     -- misses for a bounded number of frames instead.
@@ -407,6 +537,8 @@ function M._ids()
     -- the fill plate is drawn on the raw path, so it has to be visible to
     -- fill_rect before anything paints; re-read each frame so a late folder wins
     FILL_TEX = t.level_box
+    ROUND[6]  = { tl = t.round6_tl,  tr = t.round6_tr,  bl = t.round6_bl,  br = t.round6_br }
+    ROUND[13] = { tl = t.round13_tl, tr = t.round13_tr, bl = t.round13_bl, br = t.round13_br }
     return t
 end
 
@@ -432,9 +564,9 @@ local function draw_cursor_caps(x, y, fade, ov, h)
 end
 
 -- one chart card — the SCORE / LEVEL / NAME sections at their settled stations
-local function draw_chart_card(ids, info, x, y, fade)
+local function draw_chart_card(ids, info, x, y, fade, mask)
     local frame = REF[info.genre_index] or 0
-    card_base(BAND[frame] or BAND[0], x, y, fade)
+    card_base(BAND[frame] or BAND[0], x, y, fade, mask)
     chart_plates(x, y, fade, panel_of(BAND[frame] or BAND[0]))
 
     local stroke = RIM[frame] or RIM[0]
@@ -517,7 +649,8 @@ end
 -- The section's slot is taken out of the row window in draw_pro, so it never
 -- covers a chart.
 local function draw_section_shell(band, x, y, fade)
-    fill_rect(x, y, CARD_W, SUB_H, band, 255 * fade)
+    fill_round(x, y, CARD_W, SUB_H, band, 255 * fade, 13,
+               { tl = false, tr = false, bl = true, br = true })
 end
 
 -- The DON section's entries: five 262x60 BUTTONS at a 276 pitch, each a plate in
@@ -531,13 +664,14 @@ end
 -- CHANGE DIFF carry their real badge art (a 32x32 mark on the centre) and their
 -- labels centre at tx+138 — an icon tile pushes its label ~7px right; PLAY and
 -- PRACTICE, which have no icon, centre on the tile at tx+131.
-local function draw_controls(ids, st, x, y, fade, band, stroke)
+local function draw_controls(ids, st, x, y, fade, band, stroke, p, ctrlf)
+    local push = (1 - p) * 26                   -- the buttons rise into place
     draw_section_shell(band, x, y, fade)
-    local cy = y + 11 + SUB_TILE_H / 2          -- the tile row's own centre
+    local cy = y + 11 + push + SUB_TILE_H / 2   -- the tile row's own centre
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        fill_rect(tx, y + 11, 262, SUB_TILE_H, panel_of(band), 255 * fade)
+        fill_round(tx, y + 11 + push, 262, SUB_TILE_H, panel_of(band), 255 * fade, 13)
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
@@ -549,13 +683,11 @@ local function draw_controls(ids, st, x, y, fade, band, stroke)
             label_x, label_w = tx + 66, 145
         end
         draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, WHITE, stroke,
-                      is_cur and 4 or 3, label_x, y + 11, label_w, SUB_TILE_H, fade)
+                      is_cur and 4 or 3, label_x, y + 11 + push, label_w, SUB_TILE_H, fade)
     end
-    -- the cursor: the clamp on the current tile, after the whole row
-    local cur = (st.control or 1) + 1
-    if cur >= 1 and cur <= 5 then
-        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, SUB_TILE_H, fade)
-    end
+    -- the cursor: the clamp rides the ANIMATED control index (ctrlf, 0..4), on
+    -- the pushed row, drawn after the whole row
+    draw_clamp(x + 17 + ctrlf * 276, y + 11 + push, 262, SUB_TILE_H, fade)
 end
 
 -- The CHANGE DIFF picker: plate (11,4,1374,74), five 262x60 segments at a 276
@@ -565,10 +697,11 @@ end
 -- level number centred at +80, the label's LEFT edge at +104, the 56x30 tier
 -- pill at +192..+248. They hang off the SEGMENT's centre (y+41, 7px inside the
 -- plate), not the card's centre — the design's pill sits at y 26..55.
-local function draw_picker(ids, model, st, x, y, fade, band, stroke)
+local function draw_picker(ids, model, st, x, y, fade, band, stroke, p, pickf)
     local cells = model:picker_cells()
+    local push = (1 - p) * 26                   -- the segments rise into place
     draw_section_shell(band, x, y, fade)
-    local seg_top = y + 11
+    local seg_top = y + 11 + push
     local cy = seg_top + SUB_TILE_H / 2           -- the segment's own centre
     local cur_x
     for i = 1, 5 do
@@ -579,13 +712,13 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
         -- A present segment is one of the section's light BUTTONS; an ABSENT one is
         -- inked out so it reads as disabled — the cursor never lands on it (skipped
         -- in move_picker), and the commit refuses it.
-        fill_rect(sx, seg_top, 262, SUB_TILE_H, present and panel_of(band) or rgba(INK, 90), 255 * fade)
-        if is_cur then cur_x = sx end            -- the clamp, drawn after the row:
-                                                 -- on the ink plate its outline is
+        fill_round(sx, seg_top, 262, SUB_TILE_H, present and panel_of(band) or rgba(INK, 90), 255 * fade, 13)
+        if is_cur then cur_x = sx end            -- (the clamp rides pickf below:
+                                                 -- on an ink plate its outline is
                                                  -- invisible and the gold bracket
                                                  -- alone marks the segment, and the
                                                  -- tier pill keeps its own colour
-                                                 -- (a gold FILL would bury it)
+                                                 -- (a gold FILL would bury it))
         if present then
             draw_art(ids, "course", sx + 34, cy, 40, 40, { frame = i - 1, fade = fade })
             local lv = math.max(1, math.min(11, cell.level or 1))
@@ -609,13 +742,13 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
                          sx + 104, cy, fade * 0.4)
         end
     end
-    if cur_x then draw_clamp(cur_x, seg_top, 262, SUB_TILE_H, fade) end
+    draw_clamp(x + 17 + pickf * 276, seg_top, 262, SUB_TILE_H, fade)
 end
 
 -- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
 local function draw_count_pill(ids, n, x, y, fade)
-    fill_rect(x, y, 380, 64, INK, 255 * fade)
-    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 64 - 2 * RIM_T, NIJI_COUNT, 255 * fade)
+    fill_round(x, y, 380, 64, INK, 255 * fade, 13)
+    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 64 - 2 * RIM_T, NIJI_COUNT, 255 * fade, 13)
     local t = W(fmt_num(n), 44, INK, 3)
     if t then draw_text_at(t, x + 22, y + 32, fade) end
     local label = W("CHARTS", 20, INK, 2)
@@ -625,8 +758,8 @@ end
 -- one 380x30 status chip: bright nijiiro plate inside an ink rim, white text
 local function draw_chip(x, y, text2, colour, fade)
     if not text2 or text2 == "" then return end
-    fill_rect(x, y, 380, 30, INK, 255 * fade)
-    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, colour, 255 * fade)
+    fill_round(x, y, 380, 30, INK, 255 * fade, 13)
+    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, colour, 255 * fade, 6)
     local t = W(text2, 18, INK, 2)
     if t then draw_text_at(t, x + 12, y + 15, fade, 356) end
 end
@@ -655,15 +788,15 @@ end
 -- is a solid demon head), so 24px reads; anything smaller would not.
 local DIFF_TILE, DIFF_GAP = 26, 4
 local function draw_chart_chip(x, y, d, star, fade)
-    fill_rect(x, y, 380, 30, INK, 255 * fade)
-    fill_rect(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, NIJI_CHART, 255 * fade)
+    fill_round(x, y, 380, 30, INK, 255 * fade, 13)
+    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 30 - 2 * RIM_T, NIJI_CHART, 255 * fade, 6)
     local ids = M._ids()
     local tx = x + 11
     local iy = y + math.floor((30 - DIFF_TILE) / 2 + 0.5)
     for i = 1, 5 do
         local on = d[i] and true or false
         local ix = tx + (i - 1) * (DIFF_TILE + DIFF_GAP)
-        fill_rect(ix, iy, DIFF_TILE, DIFF_TILE, on and GOLD or TAN_D, (on and 255 or 130) * fade)
+        fill_round(ix, iy, DIFF_TILE, DIFF_TILE, on and GOLD or TAN_D, (on and 255 or 130) * fade, 6)
         draw_art(ids, "course", ix + DIFF_TILE / 2, iy + DIFF_TILE / 2,
                  DIFF_TILE - 2, DIFF_TILE - 2,
                  { frame = i - 1, fade = on and fade or fade * 0.45 })
@@ -732,8 +865,8 @@ local function draw_details(ids, model, st, x, y, fade)
     local band = BAND[frame] or BAND[0]
     local stroke = RIM[frame] or RIM[0]
 
-    fill_rect(x, y, 380, h, band, 255 * fade)                    -- the panel's band rim
-    fill_rect(x + 11, y + 11, 358, h - 22, panel_of(band), 255 * fade)  -- its light panel
+    fill_round(x, y, 380, h, band, 255 * fade, 13)                    -- the panel's band rim
+    fill_round(x + 11, y + 11, 358, h - 22, panel_of(band), 255 * fade, 13)  -- its light panel
 
     local tx = x + 26
     if is_chart then
@@ -824,7 +957,7 @@ local DLG_X, DLG_Y, DLG_W, DLG_H = 360, 190, 1200, 700
 -- and is a VALUE of that group (val 5), so it takes the same clamp as a toggle —
 -- the entry clamp on the label is what says you are still inside DIFFICULTY.
 local function dlg_cell(x, y, w, h, label, fillc, text_fill, text_size, outline, fade, fill_a)
-    fill_rect(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade)
+    fill_round(x, y, w, h, fillc or TAN_D, (fill_a or 255) * fade, 13)
     local t = T(label, text_size or 24, text_fill or WHITE, outline or INK,
                 (text_size or 24) >= 24 and 3 or 2)
     if t then draw_text_at(t, x + (w - t.width) / 2, y + h / 2, fade, w - 4) end
@@ -863,9 +996,10 @@ local function draw_filter_dialog(model, st, fade)
     local group_focus = (focus == "group")
 
     fill_rect(0, 0, 1920, 1080, INK, 175 * fade)                       -- scrim
-    fill_rect(DLG_X, DLG_Y, DLG_W, DLG_H, INK, 255 * fade)             -- shell
-    fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, DLG_H - 6, TAN, 255 * fade)
-    fill_rect(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade)  -- header
+    fill_round(DLG_X, DLG_Y, DLG_W, DLG_H, INK, 255 * fade, 13)        -- shell
+    fill_round(DLG_X + 3, DLG_Y + 3, DLG_W - 6, DLG_H - 6, TAN, 255 * fade, 13)
+    fill_round(DLG_X + 3, DLG_Y + 3, DLG_W - 6, 62, TAN_D, 255 * fade, 13,
+               { tl = true, tr = true, bl = false, br = false })       -- header
     draw_text_at(W("FILTER/SORT", 30, INK, 3), DLG_X + 36, DLG_Y + 34, fade)
 
     -- DIFFICULTY — a gold tile means ON, a tan tile OFF. The clamp is on the
@@ -878,7 +1012,7 @@ local function draw_filter_dialog(model, st, fade)
         local x = DLG_X + 290 + (i - 1) * 162
         local y = DLG_Y + 96
         local on = d[i] and true or false
-        fill_rect(x, y, 158, 64, on and GOLD or TAN_D, 255 * fade)
+        fill_round(x, y, 158, 64, on and GOLD or TAN_D, 255 * fade, 13)
         -- the toggle's real art (frame = course index) so the tile says WHICH
         -- course it is; whether it is on is the tile fill behind the icon
         draw_art(ids, "course", x + 30, y + 32, 34, 34, { frame = i - 1, fade = fade })
@@ -889,7 +1023,7 @@ local function draw_filter_dialog(model, st, fade)
     -- toggles. It is the only way out of the group (don toggles and stays), and
     -- don on it returns to the top level with the cursor on DIFFICULTY.
     local ckx, cky = DLG_X + 1104, DLG_Y + 96
-    fill_rect(ckx, cky, 72, 64, TAN_D, 255 * fade)
+    fill_round(ckx, cky, 72, 64, TAN_D, 255 * fade, 13)
     dlg_check(ckx, cky, 72, 64, INK, fade)
     -- the group's value clamp, drawn after every tile AND the checkmark cell, so
     -- nothing paints over it (the clamps sit in the row's 4-8px gutters)
@@ -972,7 +1106,7 @@ local function draw_filter_dialog(model, st, fade)
 
     -- footer — the live match count (a short list reads as filtered, not broken),
     -- and the CONFIRM entry beside it: don here applies and closes the dialog
-    fill_rect(DLG_X + 40, DLG_Y + 500, 700, 76, TAN_D, 255 * fade)
+    fill_round(DLG_X + 40, DLG_Y + 500, 700, 76, TAN_D, 255 * fade, 13)
     local match
     if st.context == "root" then
         match = "filter and sort apply inside a folder"
@@ -1000,6 +1134,55 @@ function M.draw(self, model)
     if not model then return false end
     local ids = M._ids()
     local st = model:state()
+
+    -- ---- the view's own animation (see the animation section) -------------
+    anim_clock()
+    local sig = anim_sig(st)
+    if sig ~= anim_sig_last then
+        -- a DIFFERENT list (context / sort / filter / rows / course / dialog):
+        -- settle every value instantly — nothing ever slides across a rebuild
+        anim_sig_last = sig
+        anim.scroll.from, anim.scroll.to, anim.scroll.val = st.cursor, st.cursor, st.cursor
+        local s0 = st.selected and SUB_H or 0
+        anim.sec.from, anim.sec.to, anim.sec.val = s0, s0, s0
+        anim.ctrl.from, anim.ctrl.to, anim.ctrl.val = (st.control or 0), (st.control or 0), (st.control or 0)
+        anim.pick.from, anim.pick.to, anim.pick.val = (st.picker or 0), (st.picker or 0), (st.picker or 0)
+        anim_selected, anim_picker_open = st.selected, st.picker_open
+    end
+    -- the scroll target is the cursor, in row units; one or two rows ease, a
+    -- skip (±10) or a wrap snaps
+    if st.cursor ~= anim.scroll.to then
+        local d = st.cursor - anim.scroll.to
+        if d == 1 or d == -1 or d == 2 or d == -2 then
+            anim_set(anim.scroll, st.cursor, ANIM_SCROLL)
+        else
+            anim_set(anim.scroll, st.cursor, 0)
+        end
+    end
+    local scroll = anim_val(anim.scroll)
+    local sl     = st.cursor - scroll              -- residual slide, in rows
+    local sec_target = st.selected and SUB_H or 0
+    if sec_target ~= anim.sec.to then anim_set(anim.sec, sec_target, ANIM_SEC) end
+    local sec_h = anim_val(anim.sec)
+    local sec_p = sec_h / SUB_H
+    -- the option bracket: only eases while the section is open, and snaps when
+    -- the section (re)opens with it
+    if not st.selected or not anim_selected then
+        anim.ctrl.from, anim.ctrl.to, anim.ctrl.val = (st.control or 0), (st.control or 0), (st.control or 0)
+    elseif (st.control or 0) ~= anim.ctrl.to then
+        anim_set(anim.ctrl, st.control or 0, ANIM_STEP)
+    end
+    local ctrlf = anim_val(anim.ctrl)
+    -- the picker bracket: eases between neighbours, snaps across absent segments
+    if not st.picker_open or not anim_picker_open then
+        anim.pick.from, anim.pick.to, anim.pick.val = (st.picker or 0), (st.picker or 0), (st.picker or 0)
+    elseif (st.picker or 0) ~= anim.pick.to then
+        local d = (st.picker or 0) - anim.pick.to
+        if d == 1 or d == -1 then anim_set(anim.pick, st.picker or 0, ANIM_STEP)
+        else anim_set(anim.pick, st.picker or 0, 0) end
+    end
+    local pickf = anim_val(anim.pick)
+    anim_selected, anim_picker_open = st.selected, st.picker_open
 
     -- backdrop: focused genre (root follows the cursor's folder)
     local bg_frame = 0
@@ -1041,18 +1224,22 @@ function M.draw(self, model)
     -- window only: the model still builds its rows in its own budgeted,
     -- cursor-driven steps and the view fetches just the slots it paints.
     local cursor_top = TOP_ROW + CURSOR_ROW * CARD_H          -- = 532
+    local cursor_y  = cursor_top + sl * CARD_H               -- animated (the slide)
     local cursor_drawn = false                               -- did the cursor row paint?
     -- The selected card's section unfolds straight under it and takes SUB_H (one
     -- CARD_H slot) of room, so every row BELOW the cursor shifts down by that much
     -- and the last drawn row still lands inside the screen — which is why MAX_OFF
     -- drops by one in the selected state. The rows above the cursor never move.
-    local sec_h  = st.selected and SUB_H or 0
-    local last   = st.selected and (MAX_OFF - 1) or MAX_OFF
+    -- sec_h is ANIMATED now (0 -> SUB_H, see the animation section): the shift,
+    -- the section and the clamp all ride the same value, and the window stays the
+    -- bigger one while it moves on either side of the ease, so a deselect folds
+    -- (sec_h > 0.5) instead of vanishing in a frame.
+    local last   = (st.selected or sec_h > 0.5) and (MAX_OFF - 1) or MAX_OFF
     for off = MIN_OFF, last do
         local row = model:row(off)
         if row then
             local x = CARD_X
-            local y = cursor_top + off * CARD_H + ((off > 0) and sec_h or 0)
+            local y = cursor_top + (off + sl) * CARD_H + ((off > 0) and sec_h or 0)
             local is_cursor = (off == 0)
             if row.kind == "chart" then
                 -- A CHART row ALWAYS draws its own card, selected or not: the chart
@@ -1061,7 +1248,11 @@ function M.draw(self, model)
                 -- `info` is resolve_display, so a committed CHANGE DIFF swap shows
                 -- on the card here exactly as it already does in the details panel.
                 local info = model:info(off)
-                if info then draw_chart_card(ids, info, x, y, 1.0) end
+                -- the cursor's card goes square on its BOTTOM edge while its
+                -- section is open, so card + section read as ONE rounded block
+                local cmask = (off == 0 and sec_h > 0.5)
+                              and { tl = true, tr = true, bl = false, br = false } or nil
+                if info then draw_chart_card(ids, info, x, y, 1.0, cmask) end
             elseif row.kind == "folder" or row.kind == "search" or row.kind == "recent"
                 or row.kind == "favorite" or row.kind == "all" then
                 draw_folder_card(ids, row, x, y, 1.0)
@@ -1083,15 +1274,15 @@ function M.draw(self, model)
     -- below the cursor were shifted down by sec_h in the loop above, so the section
     -- never covers a chart. In the selected state the cursor's C clamp stretches
     -- over the card AND the section (CARD_IN + SUB_H), gripping the block as one.
-    if st.selected then
+    if sec_h > 0.5 then
         local info = model:info(0)
         local frame = (info and REF[info.genre_index]) or 0
         local band, stroke = BAND[frame] or BAND[0], RIM[frame] or RIM[0]
-        local sec_y = cursor_top + CARD_IN
+        local sec_y = cursor_y + CARD_IN
         if st.picker_open then
-            draw_picker(ids, model, st, CARD_X, sec_y, 1.0, band, stroke)
+            draw_picker(ids, model, st, CARD_X, sec_y, sec_p, band, stroke, sec_p, pickf)
         else
-            draw_controls(ids, st, CARD_X, sec_y, 1.0, band, stroke)
+            draw_controls(ids, st, CARD_X, sec_y, sec_p, band, stroke, sec_p, ctrlf)
         end
     end
 
@@ -1110,9 +1301,12 @@ function M.draw(self, model)
     -- never land on the section unfolding below it.
     if cursor_drawn and not st.filter_open then
         -- selected: the clamp spans the WHOLE unfolded block (the card plus its
-        -- section) and sits flush, so it grips the card-and-section as one piece
-        draw_cursor_caps(CARD_X, cursor_top, 1.0, st.selected and 0 or nil,
-                         st.selected and (CARD_IN + SUB_H) or nil)
+        -- section) and sits flush, so it grips the card-and-section as one piece.
+        -- Both its height and its overhang are animated: while the section
+        -- unfolds the arms ride down with it and the 5px browse overhang
+        -- collapses toward 0, so a select or a deselect never pops.
+        local ovh = 5 * (1 - math.min(1, sec_h / 12))
+        draw_cursor_caps(CARD_X, cursor_y, 1.0, ovh, CARD_IN + sec_h)
     end
 
     -- No control-hint footer (removed at Joseph's request). The SELECT/DECIDE
