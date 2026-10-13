@@ -16,13 +16,15 @@
 --     6px seams, 14px inner padding.
 --   FOLDER / BACK / FILTER card: ONE plate (11,11,1374,62), name or an icon +
 --     label (icon at 33, label at 83) — FLOW 1's folder card, FLOW 2's pair.
---   The visible list is the design's block of 9 rows, y 196..952, so the cursor
---     row sits at y 532 (centre 574) — FLOW 1/2's composition.
+--   The list FILLS the column: 10 slots, y 196..1032, the cursor riding inside the
+--     window — mid-list it still sits at y 532 (slot 4), but at the top of a list
+--     the rows start at the very top of the block and at the end the cursor walks
+--     down to the bottom slot (Joseph 2026-10-13: use the whole vertical space).
 --   SELECTED state: the cursor chart's card is NOT replaced. It stays in its slot
---     and keeps its gold cursor rim, and the five-entry DON strip (BACK /
---     SETTINGS / PLAY / PRACTICE / CHANGE DIFF — or the CHANGE DIFF picker while
---     it is open) draws as its own panel in the card slot directly BELOW it, y
---     616..700 — one row's footprint, so the list keeps its flush 9-row rhythm.
+--     and the five-entry DON section (BACK / SETTINGS / PLAY / PRACTICE / CHANGE
+--     DIFF — or the CHANGE DIFF picker while it is open) UNFOLDS as part of that
+--     same card, straight under its bottom edge, one SUB_H slot taken out of the
+--     row window; the first row after it resumes at the next slot boundary.
 --   Left column: count pill (48,196) 380x64, the FLOW 2 chip stack at
 --     y 280/318/356, chart details (48,366) 380x336.
 --   Filter/Sort dialog: shell (360,190) 1200x700 (FLOW 5).
@@ -45,16 +47,20 @@ local M = {}
 -- ---------------------------------------------------------------- constants
 local CARD_X, CARD_W, CARD_H = 460, 1396, 84
 -- Joseph 2026-10-13: a slight gap between cards so each entry reads (and can be
--- pulled) as its own piece. The PITCH stays 84 — the pinned cursor row at 532, the
--- block of 9 and the submenu's own slot below are all untouched — the card is just
--- drawn 4px shorter (80) with the plates shortened to match, so the ring round the
--- card stays an even 11px and the gap shows the backdrop between entries.
+-- pulled) as its own piece. The PITCH stays 84 — only the drawn card is 4px shorter
+-- (80) with the plates shortened to match — so the ring round the card stays an even
+-- 11px and the gap shows the backdrop between entries.
 local CARD_GAP = 4
 local CARD_IN  = CARD_H - CARD_GAP      -- 80: the drawn card height
 local PLATE_H  = 62 - CARD_GAP          -- 58: the plates inside it (11px ring both sides)
 local TOP_ROW = 196                          -- design: the list block starts here
-local CURSOR_ROW = 4                         -- 5th of 9 rows -> cursor row at y 532
-local MIN_OFF, MAX_OFF = -4, 4               -- 9 rows, y 196..952 (design block)
+-- The list fills the column (Joseph 2026-10-13): ten slots from 196 to 1032, the
+-- cursor riding INSIDE the window — four slots above it once it passes slot 4, so
+-- mid-list it still sits at the old y 532, but at the top of a list the rows start
+-- at the very top of the block instead of leaving blank slots above a pinned cursor.
+local MIN_OFF, MAX_OFF = -4, 5               -- 10 slots, y 196..1032
+local SUB_H = 84                             -- the section's block: one CARD_H pitch
+local SUB_PLATE_H, SUB_TILE_H = 62, 60       -- its plate / tile heights (the strip's own)
 local LX = 48                                -- left column x
 local RIM_T = 3                              -- the design's ink rim
 local CURSOR_T = 5                           -- cursor gold rim thickness (SPEC 3)
@@ -504,8 +510,8 @@ end
 -- and the section, so card + section read as one piece (Joseph 2026-10-13). The
 -- rows below the cursor are pushed down by CARD_IN in draw_pro to open the room.
 local function draw_section_shell(band, x, y, fade)
-    fill_rect(x, y, CARD_W, CARD_IN, band, 255 * fade)
-    fill_rect(x + 11, y + 11, 1374, PLATE_H, panel_of(band), 255 * fade)
+    fill_rect(x, y, CARD_W, SUB_H, band, 255 * fade)
+    fill_rect(x + 11, y + 11, 1374, SUB_PLATE_H, panel_of(band), 255 * fade)
 end
 
 -- The DON section's entries: five 262x58 tiles at a 276 pitch. Each tile is a soft
@@ -521,11 +527,11 @@ end
 -- PRACTICE, which have no icon, centre on the tile at tx+131.
 local function draw_controls(ids, st, x, y, fade, band, stroke)
     draw_section_shell(band, x, y, fade)
-    local cy = y + 11 + PLATE_H / 2             -- the tile row's own centre
+    local cy = y + 11 + SUB_TILE_H / 2          -- the tile row's own centre
     for i = 1, 5 do
         local tx = x + 17 + (i - 1) * 276
         local is_cur = ((st.control or 1) + 1) == i
-        fill_rect(tx, y + 11, 262, PLATE_H, rgba(band, 62), 255 * fade)
+        fill_rect(tx, y + 11, 262, SUB_TILE_H, rgba(band, 62), 255 * fade)
         local label_x, label_w = tx, 262
         if CONTROL_ICON[i] then
             -- the badge art, scaled from its native 128 or 96, at the design's
@@ -537,12 +543,12 @@ local function draw_controls(ids, st, x, y, fade, band, stroke)
             label_x, label_w = tx + 66, 145
         end
         draw_text_box(CONTROL_NAME[i], is_cur and 26 or 24, WHITE, stroke,
-                      is_cur and 4 or 3, label_x, y + 11, label_w, PLATE_H, fade)
+                      is_cur and 4 or 3, label_x, y + 11, label_w, SUB_TILE_H, fade)
     end
     -- the cursor: the clamp on the current tile, after the whole row
     local cur = (st.control or 1) + 1
     if cur >= 1 and cur <= 5 then
-        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, PLATE_H, fade)
+        draw_clamp(x + 17 + (cur - 1) * 276, y + 11, 262, SUB_TILE_H, fade)
     end
 end
 
@@ -557,7 +563,7 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
     local cells = model:picker_cells()
     draw_section_shell(band, x, y, fade)
     local seg_top = y + 11
-    local cy = seg_top + PLATE_H / 2              -- the segment's own centre
+    local cy = seg_top + SUB_TILE_H / 2           -- the segment's own centre
     local cur_x
     for i = 1, 5 do
         local sx = x + 17 + (i - 1) * 276
@@ -567,7 +573,7 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
         -- A present segment wears the tan plate; an ABSENT one is washed out to
         -- ink so it reads as disabled — the cursor never lands on it (skipped in
         -- move_picker), and the commit refuses it.
-        fill_rect(sx, seg_top, 262, PLATE_H, present and rgba(band, 62) or rgba(INK, 70), 255 * fade)
+        fill_rect(sx, seg_top, 262, SUB_TILE_H, present and rgba(band, 62) or rgba(INK, 70), 255 * fade)
         if is_cur then cur_x = sx end            -- the clamp, drawn after the row:
                                                  -- on the ink plate its outline is
                                                  -- invisible and the gold bracket
@@ -597,7 +603,7 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke)
                          sx + 104, cy, fade * 0.4)
         end
     end
-    if cur_x then draw_clamp(cur_x, seg_top, 262, PLATE_H, fade) end
+    if cur_x then draw_clamp(cur_x, seg_top, 262, SUB_TILE_H, fade) end
 end
 
 -- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
@@ -1021,26 +1027,40 @@ function M.draw(self, model)
     local nchips = draw_chips(st, LX, 1.0)
     draw_details(ids, model, st, LX, (nchips >= 3) and 394 or 366, 1.0)
 
-    -- the list: the cursor row's own slot is the vertical centre of the block
-    local cursor_top = TOP_ROW + CURSOR_ROW * CARD_H          -- = 532
-    local cursor_drawn = false                                -- did the cursor row paint?
-    -- The selected card's section unfolds straight under it and takes CARD_IN of
-    -- room: every row BELOW the cursor shifts down by exactly that much, so the
-    -- section covers no chart and the rows above the cursor never move (Joseph
-    -- 2026-10-13 — the list makes room instead of covering the next entry).
-    local sec_h = st.selected and CARD_IN or 0
-    for off = MIN_OFF, MAX_OFF do
+    -- THE LIST — ten slots, 196..1032, the cursor riding inside the window: the
+    -- window only moves when the cursor would leave it, so a fresh list starts at
+    -- the very top of the block and the last screen of a list walks the cursor down
+    -- to the bottom slot. Row LOADING is untouched — this is the drawing window
+    -- only: the model still builds its rows in its own budgeted, cursor-driven
+    -- steps and the view fetches just the slots it paints (lazy, as ever).
+    local SLOTS  = MAX_OFF - MIN_OFF + 1                    -- 10
+    local slots  = st.selected and (SLOTS - 1) or SLOTS      -- the section takes one
+    local cur    = st.cursor or 0
+    local count  = st.rows or 0
+    local first  = math.max(0, math.min(cur + MIN_OFF, math.max(0, count - slots)))
+    local s_cur  = cur - first                               -- the cursor's own slot
+    local cursor_top = TOP_ROW + s_cur * CARD_H
+    local cursor_drawn = false                               -- did the cursor row paint?
+    for s = 0, math.min(slots, count) - 1 do
+        local idx = first + s
+        -- row() / info() take a CURSOR-RELATIVE offset and WRAP like the list, so a
+        -- slot above the cursor has to be asked for as the positive wrapped offset
+        -- (idx - cur + count): the raw negative offset would wrap to the END of the
+        -- list and paint the wrong rows into the window's top slots.
+        local off = idx - cur
+        if off < 0 then off = off + count end
         local row = model:row(off)
         if row then
             local x = CARD_X
-            local y = cursor_top + off * CARD_H + ((off > 0) and sec_h or 0)
-            local is_cursor = (off == 0)
+            -- the selected card's section takes the slot right below the cursor, so
+            -- every row past the cursor draws one slot further down
+            local sidx = (st.selected and idx > cur) and (s + 1) or s
+            local y = TOP_ROW + sidx * CARD_H
+            local is_cursor = (idx == cur)
             if row.kind == "chart" then
-                -- A CHART row ALWAYS draws its own card, selected or not. The
-                -- selected state's submenu is a SEPARATE panel in the card slot
-                -- below (see the block after this loop), so the chart you are
-                -- acting on keeps its slot and its look — the same card, the same
-                -- gold cursor rim — and the list never loses it in place.
+                -- A CHART row ALWAYS draws its own card, selected or not: the chart
+                -- you are acting on keeps its slot and its look (the clamp marks it)
+                -- and the section unfolds beneath it (see the block after this loop).
                 -- `info` is resolve_display, so a committed CHANGE DIFF swap shows
                 -- on the card here exactly as it already does in the details panel.
                 local info = model:info(off)
@@ -1061,9 +1081,10 @@ function M.draw(self, model)
     -- bottom edge with no gap and wears the card's own two tones — the genre's
     -- saturated band frame and the band's light panel — so card + section read as
     -- one piece, the card's bottom ring doubling as the divider between the two
-    -- plate areas. The rows below the cursor were pushed down by `sec_h` in the row
-    -- loop above, so the list opens the room rather than having a chart covered; the
-    -- cursor row stays PINNED at y 532, so the section always lands at 612..692.
+    -- plate areas. It is exactly one SUB_H block tall, so the first row after it
+    -- resumes on the next slot boundary with the list's normal 4px gap; the slot it
+    -- occupies was taken out of the row loop's window above, so the section never
+    -- covers a chart and nothing is ever drawn twice.
     if st.selected then
         local info = model:info(0)
         local frame = (info and REF[info.genre_index]) or 0
