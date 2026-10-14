@@ -147,11 +147,28 @@ def copy_derived(root: Path, check_only: bool, force: bool) -> bool:
 
 
 def ensure_skin_line(root: Path, check_only: bool) -> bool:
-    """Point config.toml at this skin. The game generates config.toml on first run."""
+    """Point config.toml at this skin.
+
+    config.toml is gitignored — the game writes it on first run — so a fresh
+    clone has none, and the game would boot on its default skin instead of the
+    overlay. Every key the loader reads goes through ``value_or(default)``, so a
+    minimal file carrying only the skin line is valid and the game fills in the
+    rest (and rewrites the full file the first time it saves).
+    """
     cfg = root / "config.toml"
     if not cfg.is_file():
-        print("[note]    no config.toml yet — launch the game once and re-run,")
-        print(f"          or set skin = '{SKIN_NAME}' under [paths] yourself.")
+        if check_only:
+            print(f"[missing] no config.toml — the overlay would not be selected (skin = '{SKIN_NAME}')")
+            return False
+        cfg.write_text(
+            f"[paths]\nskin = '{SKIN_NAME}'\ntja_path = [ 'Songs' ]\n",
+            encoding="utf-8",
+            newline="",
+        )
+        print(f"[ok]      wrote a minimal config.toml selecting '{SKIN_NAME}'")
+        print("          tja_path points at this repo's own Songs/ folder —")
+        print("          set it to your own library to play your charts.")
+        print("          (the game fills in every other key from its defaults)")
         return True
 
     text = cfg.read_text(encoding="utf-8", errors="surrogateescape")
