@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 
 // Course order is 0 Easy, 1 Normal, 2 Hard, 3 Oni, 4 Ura (SPEC 4).
 static constexpr int kOniCourse = 3;
@@ -375,6 +376,7 @@ void ProListModel::build_songs_step(size_t budget) {
                     rr.played = true;
                     rr.score  = s->score;
                     rr.crown  = (int)s->crown;
+                    rr.rank   = (int)s->rank;
                 }
             }
             cand_.push_back(std::move(rr));
@@ -440,6 +442,7 @@ void ProListModel::assemble_rows() {
             row.played = rr.played;
             row.score = rr.score;
             row.crown = rr.crown;
+            row.rank = rr.rank;
             rows_.push_back(std::move(row));
             if (++since_pair == kRowsPerPair) {
                 push_pair();
@@ -475,6 +478,7 @@ void ProListModel::assemble_rows() {
             }
         }
     }
+    recompute_progress();
 }
 
 bool ProListModel::folder_has_dan_content(const fs::path& folder) const {
@@ -577,6 +581,7 @@ void ProListModel::build_dan_rows() {
     rows_.push_back(std::move(back));
     spdlog::info("[pro] dan rows: {} entries under '{}'",
                  (int)rows_.size() - 1, folder_path_.string());
+    recompute_progress();
 }
 
 void ProListModel::build_root_rows() {
@@ -658,6 +663,7 @@ void ProListModel::build_root_rows() {
             rows_.push_back(std::move(g));
         }
     }
+    recompute_progress();
 }
 
 // ---- cursor ---------------------------------------------------------------
@@ -700,7 +706,12 @@ void ProListModel::filter_changed() {
 // that sits immediately before the folder's first chart; assemble_rows does the
 // arithmetic (it is the only place that knows the new row list).
 void ProListModel::rebuild_for_filter() {
-    if (context_ == Context::ROOT) return;   // the root list is never filtered
+    // The root list itself is never filtered, but the Progression card on root
+    // counts the whole library under the current filter, so it still refreshes.
+    if (context_ == Context::ROOT || dan_context_) {
+        recompute_progress();
+        return;
+    }
     begin_build(true);
 }
 
@@ -725,6 +736,74 @@ int ProListModel::chart_row_count() const {
         if (r.kind == RowKind::CHART) ++n;
     }
     return n;
+}
+
+int ProListModel::progress_rank(int rank) const {
+    if (rank < 0 || rank >= (int)progress_ranks_.size()) return 0;
+    return progress_ranks_[rank];
+}
+
+int ProListModel::progress_crown(int crown) const {
+    if (crown < 0 || crown >= (int)progress_crowns_.size()) return 0;
+    return progress_crowns_[crown];
+}
+
+// Eligible charts only: the same filter the list uses (level 1–10, course
+// present, difficulty chip, star, tier). Unplayed charts add to neither
+// bucket. Sort does not change the totals. Inside a folder the assembled
+// CHART rows are already that set; on root the list is folders, so the
+// whole library is scanned under the current filter.
+void ProListModel::recompute_progress() {
+    progress_ranks_.fill(0);
+    progress_crowns_.fill(0);
+    if (dan_context_ || nav_ == nullptr) return;
+
+    auto add = [&](int rank, int crown) {
+        if (rank >= 1 && rank <= 7) progress_ranks_[rank]++;
+        if (crown >= 1 && crown <= 3) progress_crowns_[crown]++;
+    };
+
+    const auto t0 = std::chrono::steady_clock::now();
+    if (context_ != Context::ROOT) {
+        for (const Row& r : rows_) {
+            if (r.kind != RowKind::CHART || !r.played) continue;
+            add(r.rank, r.crown);
+        }
+    } else {
+        const auto& files = nav_->library_song_files();
+        const auto& levels_map = nav_->library_song_levels();
+        const bool need_tier = !filter_.tier.empty();
+        for (const auto& [key, path] : files) {
+            (void)key;
+            auto lv_it = levels_map.find(path.string());
+            if (lv_it == levels_map.end()) continue;
+            std::array<std::string, 5> hashes{};
+            bool hashes_loaded = false;
+            for (int course = 0; course < 5; ++course) {
+                const int level = lv_it->second[course];
+                std::string tier;
+                if (need_tier) tier = tier_for_chart(path, course, level);
+                if (!chart_passes_filter(path, course, level, tier)) continue;
+                if (!hashes_loaded) {
+                    hashes = scores_manager.get_hashes(path);
+                    hashes_loaded = true;
+                }
+                const std::string& hash = hashes[course];
+                if (hash.empty()) continue;
+                auto s = scores_manager.get_score(hash, course, scores_manager.player_1);
+                if (!s) continue;
+                add((int)s->rank, (int)s->crown);
+            }
+        }
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    spdlog::info("[pro] progress {} ms ranks {} {} {} {} {} {} {} crowns {} {} {}",
+                 ms,
+                 progress_ranks_[1], progress_ranks_[2], progress_ranks_[3],
+                 progress_ranks_[4], progress_ranks_[5], progress_ranks_[6],
+                 progress_ranks_[7],
+                 progress_crowns_[1], progress_crowns_[2], progress_crowns_[3]);
 }
 
 // ---- resolved info --------------------------------------------------------

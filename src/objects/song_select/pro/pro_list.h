@@ -90,7 +90,7 @@ public:
         int level = 0;
         // Sort keys, resolved while building.
         bool played = false;
-        int score = 0, crown = 0;
+        int score = 0, crown = 0, rank = 0;
         int tier_rank = 0;                // ladder rank, 0 = tier-less
         // Dan rows: the parsed course (DAN) / the count of courses (DAN_FOLDER).
         std::shared_ptr<const DanLite> dan;
@@ -160,6 +160,12 @@ public:
     // Chart rows currently in the list (the filtered count the pill shows);
     // in a dan context it counts the DAN rows so the pill stays truthful.
     int chart_row_count() const;
+
+    // Eligible-chart progress for the Progression card. Index = Rank / Crown
+    // (0 is the none bucket and stays 0). Inside a folder this is that folder's
+    // filtered charts; on root it is the whole library under the same filter.
+    int progress_rank(int rank) const;
+    int progress_crown(int crown) const;
 
     // ---- dan rows --------------------------------------------------------
     // True while the open context is a Dan Dojo folder: filters and sort are
@@ -258,7 +264,7 @@ private:
         std::string title, subtitle;
         int course = -1, level = 0;
         bool played = false;
-        int score = 0, crown = 0;
+        int score = 0, crown = 0, rank = 0;
         int tier_rank = 0;
     };
 
@@ -309,6 +315,7 @@ private:
     // ---- build state (chunked) -----------------------------------------
     void begin_build(bool snap_cursor_to_filter = false);
     void rebuild_for_filter();            // a filter/sort change: rebuild + snap the cursor
+    void recompute_progress();            // eligible rank + crown totals for the card
     void build_songs_step(size_t budget);
     void build_sort_and_assemble();
     void collect_context_songs();
@@ -331,6 +338,10 @@ private:
 
     bool hide_dan_ = false;
     bool dan_context_ = false;   // the open context is a Dan Dojo folder
+
+    // Progression card totals. Index matches Rank / Crown (0 unused).
+    std::array<int, 8> progress_ranks_{};
+    std::array<int, 4> progress_crowns_{};
 
     // ---- chunked build state ------------------------------------------
     bool building_ = false;

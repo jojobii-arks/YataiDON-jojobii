@@ -24,8 +24,11 @@
 --     DIFF — or the CHANGE DIFF picker while it is open) UNFOLDS as part of that
 --     same card, straight under its bottom edge, one SUB_H slot taken out of the
 --     row window; the first row after it resumes at the next slot boundary.
---   Left column: count pill (48,196) 380x64, the FLOW 2 chip stack at
---     y 280/318/356, chart details (48,366) 380x336.
+--   Left column (Joseph 2026-10-13): one folder-name plate at y 24. Root shows
+--     the focused row's chart count; an open folder shows its name and count.
+--     chips at y 88/126/164, then the Nijiiro Progression plate (48,206) 380x200,
+--     then chart details (48,418) ending flush with Don at y 730. The count pill
+--     is gone — eligibility is the Progression card's own filter.
 --   Filter/Sort dialog: shell (360,190) 1200x700 (FLOW 5).
 --
 -- Don-chan and the player card are NOT drawn here — they are engine objects
@@ -131,6 +134,8 @@ local NAT = {
     star = {40, 40}, level_number = {48, 48}, branch = {40, 40},
     rank = {40, 40}, crown = {40, 40}, course = {96, 96}, pill = {184, 40},
     back_icon = {128, 128}, option_icon = {128, 128},
+    prog_rank = {50, 43},
+    prog_clear = {168, 168}, prog_fc = {168, 168}, prog_dfc = {168, 168},
 }
 
 local COURSE_NAME = { "EASY", "NORMAL", "HARD", "ONI", "URA" }
@@ -511,6 +516,10 @@ local function resolve_ids(t)
                           "round13_tl", "round13_tr", "round13_bl", "round13_br" }) do
         t[rn] = get_any("pro_ui", rn)
     end
+    t.prog_rank  = get_any("pro_ui", "prog_rank")
+    t.prog_clear = get_any("pro_ui", "prog_crown_clear")
+    t.prog_fc    = get_any("pro_ui", "prog_crown_fc")
+    t.prog_dfc   = get_any("pro_ui", "prog_crown_dfc")
 end
 
 function M._ids()
@@ -774,16 +783,6 @@ local function draw_picker(ids, model, st, x, y, fade, band, stroke, p, pickf)
     draw_clamp(x + 17 + pickf * 276, seg_top, 262, SUB_TILE_H, fade)
 end
 
--- count pill (48,196) 380x64 — bright nijiiro plate inside the design's ink rim
-local function draw_count_pill(ids, n, x, y, fade)
-    fill_round(x, y, 380, 64, INK, 255 * fade, 13)
-    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 64 - 2 * RIM_T, NIJI_COUNT, 255 * fade, 13)
-    local t = W(fmt_num(n), 44, INK, 3)
-    if t then draw_text_at(t, x + 22, y + 32, fade) end
-    local label = W("CHARTS", 20, INK, 2)
-    if label then draw_text_at(label, x + 380 - 16 - label.width, y + 36, fade) end
-end
-
 -- one 380x30 status chip: bright nijiiro plate inside an ink rim, white text
 local function draw_chip(x, y, text2, colour, fade)
     if not text2 or text2 == "" then return end
@@ -858,7 +857,7 @@ local function draw_chips(st, x, fade)
     if st.dan_context then
         -- the dan world rides outside the filter/sort system (the wheel's way):
         -- one chip says so and nothing else on this row applies
-        draw_chip(x, 280, "DAN DOJO · FILTERS OFF", NIJI_CHART, fade)
+        draw_chip(x, 88, "DAN DOJO · FILTERS OFF", NIJI_CHART, fade)
         return 1
     end
 
@@ -866,19 +865,115 @@ local function draw_chips(st, x, fade)
     -- when one is set, rides along as a compact "★N" (see draw_chart_chip).
     -- The panel is identical outside a folder and inside one — the root has no
     -- special strip any more, it draws this same three-chip stack.
-    draw_chart_chip(x, 280, st.diff, st.star, fade)
-    draw_chip(x, 318, "TIER: " .. tier_disp, NIJI_TIER, fade)
-    draw_chip(x, 356, "SORT: " .. sort_disp, NIJI_SORT, fade)
+    -- Stations sit under the folder plate (Joseph 2026-10-13): 88 / 126 / 164.
+    draw_chart_chip(x, 88, st.diff, st.star, fade)
+    draw_chip(x, 126, "TIER: " .. tier_disp, NIJI_TIER, fade)
+    draw_chip(x, 164, "SORT: " .. sort_disp, NIJI_SORT, fade)
     return 3
 end
 
--- chart details panel (380x336): the board's own band as the rim, its light panel
+-- The open context, one line, with the chart count on the same plate. Root has no
+-- folder name: the count of the row under the cursor fills the plate (the old
+-- pill's number). A folder or collection keeps its name on the left.
+local HEADER_NAME = {
+    search = "Search", recent = "Recent", favorite = "Favorite", all = "All",
+}
+
+local function header_text(st)
+    if st.context == "root" then return "" end
+    local named = HEADER_NAME[st.context or ""]
+    if named then return named end
+    local label = st.label or ""
+    if label == "" or label == "root" then return "" end
+    return label
+end
+
+local function header_count(model, st)
+    if st.context == "root" then
+        local focused = model:row(0)
+        return (focused and focused.count) or 0
+    end
+    return st.charts or 0
+end
+
+-- Folder plate: the same ink rim + bright Nijiiro fill as the chips under it.
+-- Inside a folder the fill is that genre's band, so the plate belongs to the
+-- column the way a board belongs to its genre.
+local function draw_folder_header(model, st, x, y, fade)
+    local band = NIJI_COUNT
+    if st.context ~= "root" then
+        local frame = REF[st.genre_index or 0] or 0
+        band = BAND[frame] or NIJI_COUNT
+    end
+    fill_round(x, y, 380, 52, INK, 255 * fade, 13)
+    fill_round(x + RIM_T, y + RIM_T, 380 - 2 * RIM_T, 52 - 2 * RIM_T, band, 255 * fade, 13)
+    local count = W(fmt_num(header_count(model, st)) .. " CHARTS", 20, INK, 2)
+    local name = header_text(st)
+    if name ~= "" then
+        local t = W(name, 26, INK, 3)
+        local name_w = 348 - ((count and count.width or 0) + 16)
+        if t then draw_text_at(t, x + 16, y + 26, fade, name_w) end
+        if count then draw_text_at(count, x + 364 - count.width, y + 26, fade) end
+    elseif count then
+        draw_text_at(count, x + (380 - count.width) / 2, y + 26, fade)
+    end
+end
+
+-- Nijiiro Progression plate. Cream rim, magenta body, a darker band for the
+-- crowns, white figures with an ink stroke. Rainbow (極) is the top of the right
+-- column, above gold (雅) then silver (粋). Crowns sit in that lower band:
+-- clear, FC, DFC. No Oni/Ura icons. Rank crests are drawn large enough that the
+-- kanji reads; the columns still leave room for four digits.
+local PROG_PURPLE = {196, 72, 196}
+local PROG_DARK   = {154, 40, 158}
+local PROG_RIM    = {255, 248, 240}
+
+local function prog_count(ids, key, frame, x, cy, n, fade, icon)
+    local extra = { fade = fade }
+    if frame ~= nil then extra.frame = frame end
+    draw_art(ids, key, x + icon / 2, cy, icon, icon, extra)
+    local t = W(tostring(math.floor(n or 0)), 22, INK, 3)
+    if t then draw_text_at(t, x + icon + 6, cy, fade, 72) end
+end
+
+local function draw_progress(ids, st, x, y, fade)
+    fill_round(x, y, 380, 200, PROG_RIM, 255 * fade, 13)
+    -- darker body, then the rank area in the lighter purple with a square
+    -- bottom edge so the crown band reads as its own subsection
+    fill_round(x + 4, y + 4, 372, 192, PROG_DARK, 255 * fade, 13)
+    -- A missing mask key is treated as square, so the top corners have to be
+    -- named or the crown band's flat edge squares the top of the plate too.
+    fill_round(x + 4, y + 4, 372, 136, PROG_PURPLE, 255 * fade, 13,
+               { tl = true, tr = true, bl = false, br = false })
+
+    local cols = { x + 16, x + 136, x + 256 }
+    local ranks = st.ranks or {}
+    local crowns = st.crowns or {}
+    draw_text_at(W("PROGRESSION", 16, INK, 2), cols[1], y + 28, fade, 180)
+
+    -- right column, top to bottom: rainbow, gold, silver
+    prog_count(ids, "prog_rank", 6, cols[3], y + 28, ranks[7], fade, 36)
+    -- 雅: pink, purple, gold
+    prog_count(ids, "prog_rank", 4, cols[1], y + 72, ranks[5], fade, 36)
+    prog_count(ids, "prog_rank", 5, cols[2], y + 72, ranks[6], fade, 36)
+    prog_count(ids, "prog_rank", 3, cols[3], y + 72, ranks[4], fade, 36)
+    -- 粋: white, bronze, silver
+    prog_count(ids, "prog_rank", 0, cols[1], y + 114, ranks[1], fade, 36)
+    prog_count(ids, "prog_rank", 1, cols[2], y + 114, ranks[2], fade, 36)
+    prog_count(ids, "prog_rank", 2, cols[3], y + 114, ranks[3], fade, 36)
+
+    prog_count(ids, "prog_clear", nil, cols[1], y + 166, crowns[1], fade, 40)
+    prog_count(ids, "prog_fc",    nil, cols[2], y + 166, crowns[2], fade, 40)
+    prog_count(ids, "prog_dfc",   nil, cols[3], y + 166, crowns[3], fade, 40)
+end
+
+-- chart details panel: the board's own band as the rim, its light panel
 -- inset 11, text at +26 — FLOW 2's chart details board, at its own y stations.
--- Every line is white-filled with the genre's own rim colour as the stroke (the
--- wheel's house style on a light board panel) and the panel wears the genre's two
--- tones like the card (2026-10-13); the dividers are the band at two-thirds.
-local function draw_details(ids, model, st, x, y, fade)
-    local h = 336
+-- `h` is 336 in the dan column and 312 under the Progression plate, so the
+-- panel still ends at Don (y 730). The score block shifts up by the difference.
+local function draw_details(ids, model, st, x, y, fade, h)
+    h = h or 336
+    local pack = (h < 336) and (336 - h) or 0
     local row = model:row(0)
     local info = model:info(0)
     local is_chart = row and row.kind == "chart" and info ~= nil
@@ -898,47 +993,62 @@ local function draw_details(ids, model, st, x, y, fade)
         draw_text_at(W("CHART DETAILS", 16, stroke, 2), tx, y + 30, fade)
         draw_text_at(W(info.title, 24, stroke, 3), tx, y + 66, fade, 332)
         draw_text_at(W(info.subtitle, 16, stroke, 2), tx, y + 94, fade, 332)
-        fill_rect(tx, y + 122, 332, 2, rgba(band, 170), 255 * fade)
 
-        -- course / star / level / branch / tier (@ +134)
-        local ay = y + 134
-        draw_art(ids, "course", tx + 22, ay + 22, 44, 44, { frame = info.course or 0, fade = fade })
+        -- The difficulty band is centered between the subtitle and the SCORE
+        -- label, so the gap above its top rule matches the gap below its bottom
+        -- rule. The row stays left-aligned. The branch keeps its offset from the
+        -- difficulty icon, and that icon is nudged up so the face lines up with
+        -- the level number.
+        local score_cy = y + 206 - pack
+        local sub_bot = (y + 94) + 10
+        local score_top = score_cy - 9
+        local icon_span = 48
+        local pad = 3
+        local block = icon_span + pad * 2 + 4
+        local gap = (score_top - sub_bot - block) / 2
+        local rule_top = sub_bot + gap
+        local rule_bot = score_top - gap - 2
+        local row_cy = (rule_top + rule_bot) / 2 + 2
+        local diff_cy = row_cy - 4
+        fill_rect(tx, rule_top, 332, 2, rgba(band, 170), 255 * fade)
+        draw_art(ids, "course", tx + 22, diff_cy, 44, 44, { frame = info.course or 0, fade = fade })
         if info.branching then
-            draw_art(ids, "branch", tx + 46, ay + 36, 20, 20, { fade = fade })
+            draw_art(ids, "branch", tx + 46, diff_cy + 14, 20, 20, { fade = fade })
         end
-        draw_art(ids, "star", tx + 90, ay + 22, 24, 24, { frame = info.course or 0, fade = fade })
+        draw_art(ids, "star", tx + 90, row_cy, 24, 24, { frame = info.course or 0, fade = fade })
         local lv = math.max(1, math.min(11, info.level or 1))
-        draw_art(ids, "level_number", tx + 131, ay + 21, 42, 42,
+        draw_art(ids, "level_number", tx + 131, row_cy, 42, 42,
                  { frame = (info.course or 0) * 11 + (lv - 1), fade = fade })
         if info.tier and info.tier ~= "" then
-            draw_tier_pill(ids, info.tier, tx + 186, ay + 20, 52, 36, 18, fade)
+            draw_tier_pill(ids, info.tier, tx + 186, row_cy, 52, 36, 18, fade)
         else
-            placeholder(tx + 160, ay + 2, 52, 36, fade)
+            placeholder(tx + 160, row_cy - 18, 52, 36, fade)
         end
-
-        fill_rect(tx, y + 196, 332, 2, rgba(band, 170), 255 * fade)
-        draw_text_at(W("SCORE", 14, stroke, 2), tx, y + 206, fade)
+        fill_rect(tx, rule_bot, 332, 2, rgba(band, 170), 255 * fade)
+        draw_text_at(W("SCORE", 14, stroke, 2), tx, score_cy, fade)
         if info.played then
-            draw_text_at(W(fmt_num(info.score), 30, stroke, 3), tx, y + 237, fade, 230)
-            draw_text_at(W("GOOD", 16, stroke, 2), tx, y + 258, fade)
-            draw_text_at(W(tostring(info.good or 0), 16, stroke, 2), tx + 90, y + 258, fade)
-            draw_text_at(W("OK", 16, stroke, 2), tx, y + 278, fade)
-            draw_text_at(W(tostring(info.ok or 0), 16, stroke, 2), tx + 90, y + 278, fade)
-            draw_text_at(W("MISS", 16, stroke, 2), tx, y + 298, fade)
-            draw_text_at(W(tostring(info.miss or 0), 16, stroke, 2), tx + 90, y + 298, fade)
+            draw_text_at(W(fmt_num(info.score), 30, stroke, 3), tx, y + 230 - pack, fade, 230)
+            draw_text_at(W("GOOD", 16, stroke, 2), tx, y + 258 - pack, fade)
+            draw_text_at(W(tostring(info.good or 0), 16, stroke, 2), tx + 90, y + 258 - pack, fade)
+            draw_text_at(W("OK", 16, stroke, 2), tx, y + 278 - pack, fade)
+            draw_text_at(W(tostring(info.ok or 0), 16, stroke, 2), tx + 90, y + 278 - pack, fade)
+            draw_text_at(W("MISS", 16, stroke, 2), tx, y + 298 - pack, fade)
+            draw_text_at(W(tostring(info.miss or 0), 16, stroke, 2), tx + 90, y + 298 - pack, fade)
             if info.rank and info.rank > 0 then
-                draw_art(ids, "rank", x + 320, y + 224, 40, 40, { frame = info.rank - 1, fade = fade })
+                draw_art(ids, "rank", x + 320, y + 230 - pack, 40, 40, { frame = info.rank - 1, fade = fade })
             else
-                placeholder(x + 300, y + 204, 40, 40, fade)
+                placeholder(x + 300, y + 204 - pack, 40, 40, fade)
             end
             if info.crown and info.crown > 0 then
-                draw_art(ids, "crown", x + 320, y + 272, 40, 40, { frame = info.crown, fade = fade })
+                draw_art(ids, "crown", x + 320, y + 272 - pack, 40, 40, { frame = info.crown, fade = fade })
             else
-                placeholder(x + 300, y + 252, 40, 40, fade)
+                placeholder(x + 300, y + 252 - pack, 40, 40, fade)
             end
         else
-            placeholder(tx, y + 220, 230, 34, fade)
-            draw_text_at(W("NO SCORE", 20, stroke, 2), tx + 244, y + 237, fade)
+            local t = W("NO SCORE", 20, stroke, 2)
+            if t then
+                draw_text_at(t, tx + (332 - t.width) / 2, y + 237 - pack, fade)
+            end
         end
     elseif row and row.kind == "dan" then
         local d = model:dan(0)
@@ -960,12 +1070,12 @@ local function draw_details(ids, model, st, x, y, fade)
         if d and (d.earned or -1) >= 0 then
             draw_text_at(T("CLEARED", 15, GOLD, INK, 2), tx, ey + 50, fade)
         end
-        fill_rect(tx, y + 196, 332, 2, rgba(band, 170), 255 * fade)
+        fill_rect(tx, y + 196 - pack, 332, 2, rgba(band, 170), 255 * fade)
         if d and d.songs then
             for i = 1, math.min(5, #d.songs) do
                 local s = d.songs[i]
                 local shown = (s.hidden and (d.earned or -1) < 0) and "？？？" or (s.title or "")
-                draw_text_at(W(tostring(i) .. ". " .. shown, 16, stroke, 2), tx, y + 212 + (i - 1) * 20, fade, 332)
+                draw_text_at(W(tostring(i) .. ". " .. shown, 16, stroke, 2), tx, y + 212 - pack + (i - 1) * 20, fade, 332)
             end
         end
     else
@@ -1259,23 +1369,23 @@ function M.draw(self, model)
         fill_rgb(0, 0, 1920, 1080, 40, 40, 44, 255)
     end
 
-    -- header: art band (the design's own placeholder slot) + the open context's name
-    fill_rect(56, 24, 352, 80, INK, 70)
-    draw_text_at(T("Select a song", 40, { 232, 64, 49 }, WHITE, 4), 60, 64, 1.0, 400)
-    draw_text_at(W("SONG SELECT — " .. (st.label or "root"), 26, INK, 3), 60, 131, 1.0, 900)
+    -- header: the open folder, one line. Root is a blank plate.
+    draw_folder_header(model, st, LX, 24, 1.0)
 
     if st.building and not st.filter_open then
         draw_text_at(W("BUILDING LIST…", 36, INK, 3), LX, 700, 1.0)
         return true
     end
 
-    -- left column
-    local focused = model:row(0)
-    local pill_n = st.charts or 0
-    if st.context == "root" and focused then pill_n = focused.count or 0 end
-    draw_count_pill(ids, pill_n, LX, 196, 1.0)
-    local nchips = draw_chips(st, LX, 1.0)
-    draw_details(ids, model, st, LX, (nchips >= 3) and 394 or 366, 1.0)
+    -- left column: chips under the folder plate, then the Progression plate,
+    -- then chart details ending at Don (y 730). Dan Dojo has no progress card.
+    draw_chips(st, LX, 1.0)
+    if st.dan_context then
+        draw_details(ids, model, st, LX, 126, 1.0, 336)
+    else
+        draw_progress(ids, st, LX, 206, 1.0)
+        draw_details(ids, model, st, LX, 418, 1.0, 312)
+    end
 
     -- THE LIST — the cursor is PINNED to its own slot (TOP_ROW + CURSOR_ROW *
     -- CARD_H = 532, the block's centre) and the list scrolls under it, exactly as

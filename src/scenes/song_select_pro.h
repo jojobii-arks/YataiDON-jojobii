@@ -65,7 +65,11 @@ public:
         player->script = script.get();
         // The pro layout runs a panel down to y 730; Don-chan at full size reaches
         // up to y 684 and would sit over it. 0.8 brings his visible top to ~732.
+        // He and the nameplate both drop 36px toward the bottom-left corner,
+        // so he still sits above the plate.
         player->chara_scale = 0.8f;
+        player->chara_y = 36.0f;
+        player->nameplate_y = 36.0f;
         // The boot loading screen preloads the navigator's library scan; this
         // call early-returns when that already ran. Pro reads the library
         // through the seam either way — it never builds the wheel.

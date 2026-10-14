@@ -7,5 +7,20 @@
   "round13_tl": {},
   "round13_tr": {},
   "round13_bl": {},
-  "round13_br": {}
+  "round13_br": {},
+  "prog_crown_clear": {},
+  "prog_crown_fc": {},
+  "prog_crown_dfc": {},
+  "prog_rank": {
+    "file": "rank_strip.png",
+    "crop": [
+      [0, 0, 50, 43],
+      [0, 43, 50, 43],
+      [0, 86, 50, 43],
+      [0, 129, 50, 43],
+      [0, 172, 50, 43],
+      [0, 215, 50, 43],
+      [0, 258, 50, 41]
+    ]
+  }
 }

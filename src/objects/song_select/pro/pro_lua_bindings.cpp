@@ -87,6 +87,12 @@ void register_pro_lua_bindings(sol::state& lua) {
             t["filter_value"] = m.filter_value_cursor();              // GROUP: value index
             t["active_course"] = m.active_course();
             t["dan_context"]  = m.dan_context();
+            sol::table ranks = l.create_table(7, 0);
+            for (int i = 1; i <= 7; i++) ranks[i] = m.progress_rank(i);
+            t["ranks"] = ranks;
+            sol::table crowns = l.create_table(3, 0);
+            for (int i = 1; i <= 3; i++) crowns[i] = m.progress_crown(i);
+            t["crowns"] = crowns;
             t["picker_open"]  = m.picker_open();
             t["picker"]       = m.picker_cursor();
             return t;
