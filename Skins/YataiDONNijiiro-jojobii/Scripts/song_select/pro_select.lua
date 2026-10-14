@@ -520,6 +520,7 @@ local function resolve_ids(t)
     t.prog_clear = get_any("pro_ui", "prog_crown_clear")
     t.prog_fc    = get_any("pro_ui", "prog_crown_fc")
     t.prog_dfc   = get_any("pro_ui", "prog_crown_dfc")
+    t.song_counter = get_any("yellow_box", "song_count_back")   -- the arcade "Song N" plate
 end
 
 function M._ids()
@@ -1294,6 +1295,63 @@ end
 -- function was pro-only).
 
 -- -------------------------------------------------------------------- draw
+-- ---- the arcade song counter (Joseph 2026-10-13) -------------------------
+-- The wheel gets this plate from the engine: song_select.cpp builds
+-- `SongNum(global_data.songs_played + 1)`, draws "Song {0}" from skin_config
+-- `song_num`, and the wheel's own draw_song_max() puts "of {0}" from
+-- `config.general.song_limit` beside it. The pro screen is a different scene —
+-- ProSongSelectScreen::draw runs script->draw_pro and returns, so song_select.cpp
+-- never paints either half for it. Both are composed here instead, from the same
+-- skin_config / skin_text entries, under the nameplate in the bottom-left.
+--
+-- The plate is 280x72 and lives at (1754,270) on the wheel. The nameplate's art
+-- ends at y 1030 and the screen at 1080, so the plate rides scaled into that
+-- 48px — COUNTER_K 0.6 — keeping the wheel's internal layout: its "Song N" right
+-- edge and "of M" centre are the same fractions of the plate's width they are
+-- there (108 and 210 of 280, from the plate's left edge).
+local SONG_COUNTER_NAT = { 280, 72 }     -- song_count_back.png, measured
+local COUNTER_K     = 0.60
+local COUNTER_X     = 58                 -- left-aligned with the nameplate's art
+local COUNTER_Y     = 1033
+local COUNTER_NUM_R = 108 * COUNTER_K    -- "Song N" right edge, from the plate's left
+local COUNTER_MAX_C = 210 * COUNTER_K    -- "of M" centre, ditto
+
+local function draw_song_counter(ids, fade)
+    local id = ids.song_counter
+    if not id then return end
+    local w, h = SONG_COUNTER_NAT[1] * COUNTER_K, SONG_COUNTER_NAT[2] * COUNTER_K
+    tex.draw_texture(id, {
+        x = COUNTER_X, y = COUNTER_Y,
+        x2 = w - SONG_COUNTER_NAT[1], y2 = h - SONG_COUNTER_NAT[2],
+        fade = fade,
+    })
+
+    -- "Song N": white with the wheel's black stroke, right-aligned in the plate's
+    -- white left half, exactly as the engine places it there (right edge 1722).
+    local n = (tex.songs_played() or 0) + 1
+    local sc = tex.get_skin_config("song_num") or {}
+    local size = math.max(12, math.floor((sc.font_size or 24) * COUNTER_K))
+    local t = W((tex.skin_text("song_num"):gsub("{0}", tostring(n))), size, INK, 2.33 * COUNTER_K)
+    if t then
+        t:draw({ x = math.floor(COUNTER_X + COUNTER_NUM_R - t.width + 0.5),
+                 y = math.floor(COUNTER_Y + (h - t.height) / 2 + 0.5), fade = fade })
+    end
+
+    -- "of M": the wheel draws this ONLY when a limit is configured (its
+    -- draw_song_max returns early on limit <= 0), so an unset song_limit shows
+    -- the bare "Song N" here too rather than a dangling "of 0".
+    local limit = tex.song_limit() or 0
+    if limit > 0 then
+        local sc2 = tex.get_skin_config("song_num_max") or {}
+        local t2 = W((tex.skin_text("song_num_max"):gsub("{0}", tostring(limit))),
+                     math.max(12, math.floor((sc2.font_size or 24) * COUNTER_K)), INK, 2.0 * COUNTER_K)
+        if t2 then
+            t2:draw({ x = math.floor(COUNTER_X + COUNTER_MAX_C - t2.width / 2 + 0.5),
+                      y = math.floor(COUNTER_Y + (h - t2.height) / 2 + 0.5), fade = fade })
+        end
+    end
+end
+
 function M.draw(self, model)
     if not model then return false end
     local ids = M._ids()
@@ -1386,6 +1444,11 @@ function M.draw(self, model)
         draw_progress(ids, st, LX, 206, 1.0)
         draw_details(ids, model, st, LX, 418, 1.0, 312)
     end
+
+    -- the arcade song counter, bottom-left under the nameplate (see the block
+    -- above). The nameplate itself belongs to the engine's Player, so this is
+    -- the only place the skin can put anything below it.
+    draw_song_counter(ids, 1.0)
 
     -- THE LIST — the cursor is PINNED to its own slot (TOP_ROW + CURSOR_ROW *
     -- CARD_H = 532, the block's centre) and the list scrolls under it, exactly as
