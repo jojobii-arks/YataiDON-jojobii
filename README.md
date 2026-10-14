@@ -36,5 +36,14 @@ Full write-ups, including the engine surfaces each feature touches, are in [`doc
   ```
 
   A clone that cannot reach that host still builds and runs the engine; only the Nijiiro-based skins need it.
+- **Then assemble the overlay skin.** The fork's own skin work lives in `Skins/YataiDONNijiiro-jojobii`, a small overlay whose parent supplies every texture, font and sound. Its derived assets (the `Sounds/` it does not own) are not committed, so copy them in from the fetched parent:
+
+  ```sh
+  python tools/setup_skin.py              # fetch parents + copy the derived assets
+  python tools/setup_skin.py --check      # report what's missing, change nothing
+  python tools/setup_skin.py --engine-only  # skip the parent fetch (offline)
+  ```
+
+  The derived set is listed in [`tools/skin-assets.txt`](tools/skin-assets.txt). The script is idempotent and also points `config.toml`'s `[paths] skin` at the overlay.
 - **The tier list is fetched, not committed** — see above.
 - Pre-built binaries on the [releases page](https://github.com/Yonokid/YataiDON/releases) are upstream's, and do not include the features above. This fork's features need a build from source.

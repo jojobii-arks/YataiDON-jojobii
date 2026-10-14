@@ -5,7 +5,7 @@ community features on top of upstream. Everything here is additive: upstream's
 screens, input model and skins are untouched unless a feature is explicitly
 switched on.
 
-Skin-side work lives in a small overlay skin, `Skins/YataiDONNijiiroLocal`,
+Skin-side work lives in a small overlay skin, `Skins/YataiDONNijiiro-jojobii`,
 whose `Graphics/skin_config.json` declares a `"parent"` skin. The parent
 supplies every texture, font and sound; the overlay overrides only the scripts
 and graphics it needs. The parent skins are external (see
@@ -127,6 +127,6 @@ git submodule update --init Skins/PyTaikoGreen Skins/YataiDONRed Skins/YataiDONN
 ```
 
 A clone that cannot reach that host still builds the engine; it just cannot run
-the Nijiiro-based skins. The `YataiDONNijiiroLocal` overlay in this repository
+the Nijiiro-based skins. The `YataiDONNijiiro-jojobii` overlay in this repository
 carries the fork's own scripts and graphics, but a complete, runnable skin also
 needs `skin_config.json`, its `Sounds/`, and the skin selected in `config.toml`.

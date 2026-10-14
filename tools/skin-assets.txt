@@ -1,0 +1,15 @@
+# Assets the overlay skin declares but does not own.
+#
+# Each line is a path relative to the overlay skin directory
+# (Skins/YataiDONNijiiro-jojobii). A trailing slash means a whole directory.
+# Every one of these is copied verbatim from the parent skin
+# (Skins/YataiDONNijiiro) at the same relative path by tools/setup_skin.py.
+#
+# Verified 2026-10-13: all 51 files under the overlay's Sounds/ are
+# byte-identical to the parent's copy at the same relative path, so these are
+# derived assets, not authored ones — which is why they are not tracked in this
+# repository (see /Skins/YataiDONNijiiro-jojobii/Sounds/ in .gitignore).
+#
+Sounds/don.wav
+Sounds/ka.wav
+Sounds/hit_sounds/

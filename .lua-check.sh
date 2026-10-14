@@ -5,6 +5,6 @@
 # so check here first.
 set -e
 LUAC=/c/msys64/mingw64/bin/luac.exe
-for f in Skins/YataiDONNijiiroLocal/Scripts/song_select/*.lua; do
+for f in Skins/YataiDONNijiiro-jojobii/Scripts/song_select/*.lua; do
   "$LUAC" -p "$f" && echo "ok: $f"
 done

@@ -1,0 +1,32 @@
+{
+  "screen": {
+    "parent": "YataiDONNijiiro",
+    "width": 1920,
+    "height": 1080,
+    "options": {
+      "delay_score_addition": false,
+      "horizontal_song_select": true,
+      "one_menu_sort": true,
+      "option_skip_row": true,
+      "option_neiro_row": true,
+      "dan_result_rank_plate": true,
+      "dan_game_rank_plate": true,
+      "dan_select_rank_plate": true,
+      "entry_credit_arcade": true,
+      "dan_confirm_yes_left": false,
+      "dan_title_horizontal": true,
+      "combo_color_tiers": true,
+      "gauge_cell_fade_in": true,
+      "dan_exam_grid": true,
+      "disable_chara_3d": false
+    }
+  },
+  "entry_pro": {
+    "text": {
+      "en": "Pro Select",
+      "ja": "プロ選曲",
+      "zh": "专业选曲",
+      "ko": "프로 선곡"
+    }
+  }
+}

@@ -14,6 +14,8 @@ YataiDON
 YataiDON.exe
 /.cmake-deps
 /Skins/*
+!/Skins/YataiDONNijiiro-jojobii/
+/Skins/YataiDONNijiiro-jojobii/Sounds/
 /.claude
 .cursor/
 .version
